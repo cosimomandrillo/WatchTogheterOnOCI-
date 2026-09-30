@@ -2,11 +2,11 @@
 """
 Watch Together — Server relay WebSocket (Python 3.10+).
 
-Novità v4.0:
-  • Tombstone: le stanze cancellate dal TTL mantengono la password per 5 min,
-    così non si può ricrearle con una password diversa.
-  • SQLite: le stanze marcate "persistent" sopravvivono ai riavvii.
-  • Messaggio "hello" accetta i flag "create" e "persistent".
+Ottimizzazioni v4.1:
+  • WS persistente per homepage (subscribe-rooms) invece di polling ogni 5s
+  • sync-request compatto (1 frame invece di 50)
+  • db_upsert preserva title/description/image
+  • broadcast_room_list sui cambi stanza (join/leave/create/update/delete)
 """
 import asyncio
 import json
@@ -38,7 +38,6 @@ VIDEO_URL_PATTERNS = [
 ]
 URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
 
-# ============ ADMIN ============
 ADMIN_USER = os.getenv("WT_ADMIN_USER", "admin")
 ADMIN_PASS = os.getenv("WT_ADMIN_PASS", "")
 ADMIN_SESSION_TTL = 3600
@@ -61,7 +60,6 @@ def _prune_admin_sessions():
         ADMIN_SESSIONS.pop(k, None)
 
 
-
 logging.basicConfig(
     format="[WT] %(asctime)s %(levelname)s %(message)s",
     datefmt="%H:%M:%S",
@@ -70,12 +68,10 @@ logging.basicConfig(
 log = logging.getLogger("wt")
 
 ROOMS: dict = {}
-TOMBSTONES: dict = {}  # { room_name: {"password": str, "expires_at": float} }
+LISTENERS: set = set()
+TOMBSTONES: dict = {}
 
 
-# =================================================================
-#                          DB HELPERS
-# =================================================================
 def db_init():
     conn = sqlite3.connect(DB_PATH)
     conn.execute("""
@@ -90,7 +86,6 @@ def db_init():
             created_at  REAL NOT NULL
         )
     """)
-    # Migrazione: aggiungi colonne se mancano
     for col in ("title", "description", "image"):
         try:
             conn.execute(f"ALTER TABLE persistent_rooms ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
@@ -119,18 +114,29 @@ def db_load_all() -> dict:
     return rooms
 
 
-def db_upsert(name, password, owner_token, url):
+def db_upsert(name, password, owner_token, url, title=None, description=None, image=None):
     conn = sqlite3.connect(DB_PATH)
+    row = conn.execute(
+        "SELECT title, description, image FROM persistent_rooms WHERE name = ?",
+        (name,),
+    ).fetchone()
+    if title is None:
+        title = row[0] if row else ""
+    if description is None:
+        description = row[1] if row else ""
+    if image is None:
+        image = row[2] if row else ""
     conn.execute("""
-        INSERT INTO persistent_rooms (name, password, owner_token, url, created_at, title, description)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO persistent_rooms (name, password, owner_token, url, created_at, title, description, image)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(name) DO UPDATE SET
             password    = excluded.password,
             owner_token = excluded.owner_token,
             url         = excluded.url,
             title       = excluded.title,
-            description = excluded.description
-    """, (name, password, owner_token, url, time.time(), "", ""))
+            description = excluded.description,
+            image       = excluded.image
+    """, (name, password, owner_token, url, time.time(), title, description, image))
     conn.commit()
     conn.close()
 
@@ -142,9 +148,6 @@ def db_delete(name):
     conn.close()
 
 
-# =================================================================
-#                          UTILITY
-# =================================================================
 def sanitize_chat(text: str) -> str:
     text = (text or "").strip()[:CHAT_MAX_LEN]
     return URL_RE.sub("[link rimosso]", text)
@@ -188,6 +191,35 @@ def prune_tombstones():
         TOMBSTONES.pop(k, None)
 
 
+def _rooms_snapshot():
+    rooms = [
+        {
+            "name": r_name,
+            "clients": len(r_data["clients"]),
+            "hasPassword": bool(r_data.get("password", "")),
+            "url": r_data.get("url", ""),
+            "title": r_data.get("title", ""),
+            "description": r_data.get("description", ""),
+            "image": r_data.get("image", ""),
+            "persistent": bool(r_data.get("persistent", False)),
+        }
+        for r_name, r_data in ROOMS.items()
+    ]
+    rooms.sort(key=lambda x: (-x["clients"], x["name"]))
+    return rooms[:50]
+
+
+async def broadcast_room_list() -> None:
+    """Push lista stanze aggiornata a tutti i listener della homepage."""
+    if not LISTENERS:
+        return
+    payload = json.dumps({"type": "rooms", "rooms": _rooms_snapshot()})
+    await asyncio.gather(
+        *(w.send(payload) for w in tuple(LISTENERS)),
+        return_exceptions=True,
+    )
+
+
 async def broadcast(room: str, payload: dict, skip=None) -> None:
     r = ROOMS.get(room)
     if not r:
@@ -199,9 +231,6 @@ async def broadcast(room: str, payload: dict, skip=None) -> None:
     )
 
 
-# =================================================================
-#                          HANDLER
-# =================================================================
 async def handler(ws):
     room = None
     last_chat_ts = 0.0
@@ -222,30 +251,22 @@ async def handler(ws):
 
             t = msg.get("type")
 
-            # ---------------- list-rooms ----------------
             if t == "list-rooms":
                 prune_tombstones()
-                rooms = [
-                    {
-                        "name": r_name,
-                        "clients": len(r_data["clients"]),
-                        "hasPassword": bool(r_data.get("password", "")),
-                        "url": r_data.get("url", ""),
-                        "title": r_data.get("title", ""),
-                        "description": r_data.get("description", ""),
-                        "image": r_data.get("image", ""),
-                        "persistent": bool(r_data.get("persistent", False)),
-                    }
-                    for r_name, r_data in ROOMS.items()
-                ]
-                rooms.sort(key=lambda x: (-x["clients"], x["name"]))
                 try:
-                    await ws.send(json.dumps({"type": "rooms", "rooms": rooms[:50]}))
+                    await ws.send(json.dumps({"type": "rooms", "rooms": _rooms_snapshot()}))
                 except Exception:
                     pass
                 continue
 
-            # ---------------- verify-password ----------------
+            if t == "subscribe-rooms":
+                LISTENERS.add(ws)
+                try:
+                    await ws.send(json.dumps({"type": "rooms", "rooms": _rooms_snapshot()}))
+                except Exception:
+                    pass
+                continue
+
             if t == "verify-password":
                 name = msg.get("name") or ""
                 pwd_check = msg.get("password") or ""
@@ -280,7 +301,6 @@ async def handler(ws):
                     pass
                 continue
 
-            # ---------------- admin-login ----------------
             if t == "admin-login":
                 u = (msg.get("username") or "").strip()
                 pwd_in = msg.get("password") or ""
@@ -307,7 +327,6 @@ async def handler(ws):
                         pass
                 continue
 
-            # ---------------- admin-delete-room ----------------
             if t == "admin-delete-room":
                 if not _is_admin(msg.get("token") or ""):
                     try:
@@ -338,6 +357,7 @@ async def handler(ws):
                     except Exception:
                         pass
                 ROOMS.pop(name, None)
+                await broadcast_room_list()
                 log.info(f"admin ha cancellato la stanza {name!r}")
                 try:
                     await ws.send(json.dumps({"type": "admin-ok"}))
@@ -345,7 +365,6 @@ async def handler(ws):
                     pass
                 continue
 
-            # ---------------- admin-update-room ----------------
             if t == "admin-update-room":
                 if not _is_admin(msg.get("token") or ""):
                     try:
@@ -368,9 +387,6 @@ async def handler(ws):
                         pass
                     continue
                 new_url = sanitize_url(msg.get("url") or "")
-                title = (msg.get("title") or "").strip()[:200]
-                description = (msg.get("description") or "").strip()[:300]
-                image = (msg.get("image") or "").strip()[:300]
                 if new_url:
                     r_obj["url"] = new_url
                 if "image" in msg:
@@ -380,8 +396,15 @@ async def handler(ws):
                 if "persistent" in msg:
                     r_obj["persistent"] = bool(msg.get("persistent"))
                 if r_obj.get("persistent"):
-                    db_upsert(name, r_obj.get("password", ""),
-                              r_obj.get("owner_token", ""), r_obj.get("url", ""))
+                    db_upsert(
+                        name,
+                        r_obj.get("password", ""),
+                        r_obj.get("owner_token", ""),
+                        r_obj.get("url", ""),
+                        title=r_obj.get("title", ""),
+                        description=r_obj.get("description", ""),
+                        image=r_obj.get("image", ""),
+                    )
                 else:
                     db_delete(name)
                 await broadcast(name, {
@@ -391,6 +414,7 @@ async def handler(ws):
                     "hasPassword": bool(r_obj.get("password", "")),
                     "persistent": bool(r_obj.get("persistent", False)),
                 })
+                await broadcast_room_list()
                 log.info(f"admin ha aggiornato la stanza {name!r}")
                 try:
                     await ws.send(json.dumps({"type": "admin-ok"}))
@@ -398,7 +422,6 @@ async def handler(ws):
                     pass
                 continue
 
-            # ---------------- hello ----------------
             if t == "hello":
                 r = msg.get("room")
                 if not r or not isinstance(r, str) or len(r) > 64:
@@ -414,17 +437,18 @@ async def handler(ws):
 
                 author = (msg.get("author") or "?").strip()[:32] or "?"
                 url = sanitize_url(msg.get("url") or "")
+                title = (msg.get("title") or "").strip()[:200]
+                description = (msg.get("description") or "").strip()[:300]
+                image = (msg.get("image") or "").strip()[:300]
 
                 create = msg.get("create", True) is True
                 persistent = msg.get("persistent", False) is True
 
                 existing = ROOMS.get(r)
 
-                # ---------- stanza non esiste ----------
                 if existing is None:
                     prune_tombstones()
 
-                    # TOMBSTONE: se esisteva ed era protetta, richiedi stessa password
                     tomb = TOMBSTONES.get(r)
                     if tomb:
                         if tomb["password"] != p:
@@ -442,7 +466,6 @@ async def handler(ws):
                                 pass
                             await ws.close(code=4001, reason="auth failed")
                             return
-                        # password corretta → possiamo ricrearla
                         log.info(f"re-create {r!r} autorizzato dal tombstone")
 
                     if not create:
@@ -486,12 +509,12 @@ async def handler(ws):
                         "persistent": persistent,
                     }
                     if persistent:
-                        db_upsert(r, p, token, url)
+                        db_upsert(r, p, token, url,
+                                  title=title, description=description, image=image)
                     owner = True
                     out_token = token
                     log.info(f"stanza creata: {r!r} url={url!r} persistent={persistent} da {my_ip}")
 
-                # ---------- stanza esistente ----------
                 else:
                     existing_pwd = existing.get("password", "")
                     if existing_pwd and existing_pwd != p and not is_owner(existing, ot):
@@ -523,7 +546,10 @@ async def handler(ws):
                             existing["url"] = url
                             if existing.get("persistent"):
                                 db_upsert(r, existing.get("password", ""),
-                                          existing.get("owner_token", ""), url)
+                                          existing.get("owner_token", ""), url,
+                                          title=existing.get("title", ""),
+                                          description=existing.get("description", ""),
+                                          image=existing.get("image", ""))
                             log.info(f"stanza {r!r} URL aggiornato a {url!r} (owner)")
                         else:
                             try:
@@ -541,12 +567,14 @@ async def handler(ws):
                         existing["url"] = url
                         if existing.get("persistent"):
                             db_upsert(r, existing.get("password", ""),
-                                      existing.get("owner_token", ""), url)
+                                      existing.get("owner_token", ""), url,
+                                      title=existing.get("title", ""),
+                                      description=existing.get("description", ""),
+                                      image=existing.get("image", ""))
 
                     owner = is_owner(existing, ot)
                     out_token = existing.get("owner_token", "") if owner else None
                     cancel_cleanup(existing)
-                    log.info(f"password check OK per {r!r} da {my_ip}")
 
                 was_in_room = (room == r)
                 if room != r:
@@ -579,13 +607,12 @@ async def handler(ws):
                         "author": author,
                         "clients": len(ROOMS[room]["clients"]),
                     }, skip=ws)
+                    await broadcast_room_list()
                 continue
 
-            # ---------------- set-password ----------------
             if t == "set-password":
                 if room is None or room not in ROOMS:
                     continue
-
                 r_obj = ROOMS[room]
                 ot = msg.get("ownerToken") or ""
                 if not is_owner(r_obj, ot):
@@ -598,23 +625,24 @@ async def handler(ws):
                     except Exception:
                         pass
                     continue
-
                 new_pass = msg.get("newPass") or ""
                 if not isinstance(new_pass, str) or len(new_pass) > 64:
                     new_pass = ""
                 r_obj["password"] = new_pass
                 if r_obj.get("persistent"):
                     db_upsert(room, new_pass, r_obj.get("owner_token", ""),
-                              r_obj.get("url", ""))
-
+                              r_obj.get("url", ""),
+                              title=r_obj.get("title", ""),
+                              description=r_obj.get("description", ""),
+                              image=r_obj.get("image", ""))
                 await broadcast(room, {
                     "type": "password-changed",
                     "hasPassword": bool(new_pass),
                 })
+                await broadcast_room_list()
                 log.info(f"password cambiata per {room!r}")
                 continue
 
-            # ---------------- create-persistent (da /watch) ----------------
             if t == "create-persistent":
                 name = msg.get("name") or ""
                 password = msg.get("password") or ""
@@ -664,6 +692,7 @@ async def handler(ws):
                     "persistent": True,
                 }
                 db_upsert(name, password, token, url)
+                await broadcast_room_list()
                 log.info(f"stanza persistente creata da /watch: {name!r} url={url!r}")
 
                 try:
@@ -677,7 +706,6 @@ async def handler(ws):
                     pass
                 continue
 
-            # ---------------- delete-room (owner) ----------------
             if t == "delete-room":
                 if room is None or room not in ROOMS:
                     continue
@@ -693,7 +721,6 @@ async def handler(ws):
                     except Exception:
                         pass
                     continue
-                # Cancella stanza
                 db_delete(room)
                 for peer in tuple(r_obj["clients"]):
                     try:
@@ -704,10 +731,10 @@ async def handler(ws):
                     except Exception:
                         pass
                 ROOMS.pop(room, None)
+                await broadcast_room_list()
                 log.info(f"stanza cancellata dall'owner: {room!r}")
                 continue
 
-            # ---------------- messaggi che richiedono stanza ----------------
             if room is None:
                 continue
 
@@ -727,41 +754,37 @@ async def handler(ws):
             if not peers:
                 continue
 
-            # ---------------- update-url ----------------
-            # Permette al client di aggiornare l'URL della stanza quando
-            # cambia episodio (es. /watch/61 -> /watch/62).
             if t == "update-url":
-                if room is None or room not in ROOMS:
-                    continue
-                r_req = msg.get("room")
-                if not r_req or r_req != room:
-                    continue
                 new_url = sanitize_url(msg.get("url") or "")
                 if not new_url:
                     continue
-                current_url = ROOMS[room].get("url", "")
-                if new_url == current_url:
+                if new_url == ROOMS[room].get("url", ""):
                     continue
                 ROOMS[room]["url"] = new_url
+                if msg.get("title"):
+                    ROOMS[room]["title"] = (msg.get("title") or "").strip()[:200]
+                if msg.get("description"):
+                    ROOMS[room]["description"] = (msg.get("description") or "").strip()[:300]
                 if ROOMS[room].get("persistent"):
                     db_upsert(
                         room,
                         ROOMS[room].get("password", ""),
                         ROOMS[room].get("owner_token", ""),
                         new_url,
+                        title=ROOMS[room].get("title", ""),
+                        description=ROOMS[room].get("description", ""),
+                        image=ROOMS[room].get("image", ""),
                     )
-                log.info(f"URL aggiornato per {room!r}: {current_url!r} -> {new_url!r}")
+                log.info(f"URL aggiornato per {room!r}: -> {new_url!r}")
                 await broadcast(room, {
                     "type": "url-updated",
                     "room": room,
                     "url": new_url,
                 }, skip=ws)
+                await broadcast_room_list()
                 continue
 
-            # ---------------- update-meta ----------------
             if t == "update-meta":
-                if room is None or room not in ROOMS:
-                    continue
                 new_title = (msg.get("title") or "").strip()[:200]
                 new_desc = (msg.get("description") or "").strip()[:300]
                 new_image = (msg.get("image") or "").strip()[:300]
@@ -772,17 +795,19 @@ async def handler(ws):
                 if new_image:
                     ROOMS[room]["image"] = new_image
                 if ROOMS[room].get("persistent"):
-                    conn = sqlite3.connect(DB_PATH)
-                    conn.execute(
-                        "UPDATE persistent_rooms SET title = ?, description = ? WHERE name = ?",
-                        (ROOMS[room]["title"], ROOMS[room]["description"], room),
+                    db_upsert(
+                        room,
+                        ROOMS[room].get("password", ""),
+                        ROOMS[room].get("owner_token", ""),
+                        ROOMS[room].get("url", ""),
+                        title=ROOMS[room].get("title", ""),
+                        description=ROOMS[room].get("description", ""),
+                        image=ROOMS[room].get("image", ""),
                     )
-                    conn.commit()
-                    conn.close()
-                log.info(f"meta aggiornato per {room!r}: {new_title!r} / {new_desc!r}")
+                log.info(f"meta aggiornato per {room!r}: {new_title!r}")
+                await broadcast_room_list()
                 continue
 
-            # ---------------- chat ----------------
             if t == "chat":
                 now = time.time()
                 if now - last_chat_ts < CHAT_RATE_SEC:
@@ -810,22 +835,18 @@ async def handler(ws):
                 )
                 continue
 
-            # ---------------- sync-request ----------------
             if t == "sync-request":
-                st = ROOMS[room].get("state")
-                if st:
-                    try:
-                        await ws.send(json.dumps(st))
-                    except Exception:
-                        pass
-                for c in ROOMS[room].get("chat", []):
-                    try:
-                        await ws.send(json.dumps(c))
-                    except Exception:
-                        pass
+                hist = ROOMS[room].get("chat", [])
+                try:
+                    await ws.send(json.dumps({
+                        "type": "sync",
+                        "state": ROOMS[room].get("state"),
+                        "chat": hist[-30:],
+                    }))
+                except Exception:
+                    pass
                 continue
 
-            # ---------------- tick ----------------
             if t == "tick":
                 await asyncio.gather(
                     *(p.send(raw) for p in tuple(peers) if p is not ws),
@@ -833,7 +854,6 @@ async def handler(ws):
                 )
                 continue
 
-            # ---------------- play/pause/seek ----------------
             if t in ("play", "pause", "seek"):
                 ROOMS[room]["state"] = {
                     "type": t,
@@ -850,6 +870,7 @@ async def handler(ws):
     except Exception as e:
         log.warning(f"handler eccezione: {e!r}")
     finally:
+        LISTENERS.discard(ws)
         if room:
             await leave(room, ws, notify=True)
 
@@ -891,12 +912,12 @@ async def leave(room: str, ws, notify: bool = False) -> None:
                 if current.get("persistent"):
                     log.info(f"stanza persistente mantenuta: {room!r}")
                     return
-                # Tombstone
                 TOMBSTONES[room] = {
                     "password": current.get("password", ""),
                     "expires_at": time.time() + TOMBSTONE_TTL,
                 }
                 ROOMS.pop(room, None)
+                await broadcast_room_list()
                 log.info(f"stanza rimossa (tombstone {TOMBSTONE_TTL}s): {room!r}")
             except asyncio.CancelledError:
                 pass
@@ -905,6 +926,8 @@ async def leave(room: str, ws, notify: bool = False) -> None:
             r["cleanup_task"] = asyncio.create_task(_cleanup())
         except RuntimeError:
             pass
+    else:
+        await broadcast_room_list()
 
 
 async def main():
@@ -930,7 +953,7 @@ async def main():
     log.info(f"WT relay su {HOST}:{PORT} (TTL={ROOM_IDLE_TTL}s, tombstone={TOMBSTONE_TTL}s, {len(loaded)} stanze persistenti)")
     async with websockets.serve(
         handler, HOST, PORT,
-        ping_interval=20, ping_timeout=20,
+        ping_interval=30, ping_timeout=30,
         max_size=4096, max_queue=32, compression=None,
     ):
         await asyncio.Future()
