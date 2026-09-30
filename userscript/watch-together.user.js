@@ -1,14 +1,11 @@
 // ==UserScript==
 // @name         Watch Together
 // @namespace    watch-together
-// @version      4.8.0
+// @match        *://*/*
+// @match        *://*.vixcloud.co/*
+// @version      4.9.0
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
-// @match        *://vixcloud.co/*
-// @match        *://*.vixcloud.co/*
-// @match        *://streamingcommunityz.pictures/*
-// @match        *://*.streamingcommunity*/*
-// @match        *://YOUR_SERVER_HERE/*
 // @run-at       document-start
 // @grant        none
 // @updateURL    https://YOUR_SERVER_HERE/wt.user.js
@@ -19,6 +16,30 @@
 
 (function () {
     'use strict';
+
+    // =================================================================
+    // BAIL-OUT DINAMICO: nessun dominio SC hardcoded
+    // =================================================================
+    // Se il dominio NON contiene parole chiave SC comuni, esci subito.
+    // Il dominio di StreamingCommunity cambia spesso (Telegram lo
+    // comunica), ma contiene quasi sempre "streaming" / "community"
+    // / "vixcloud". Se in futuro cambierà forma, basterà aggiungere
+    // un pattern qui oppure lasciare che il sync_domain.py aggiorni
+    // automaticamente @match (vedi GitHub Actions).
+    (function(){
+        const SC_PATTERNS = /streaming|community|vixcloud|sc-?watch|watch-?sc/i;
+        const host = location.hostname || '';
+        if (!SC_PATTERNS.test(host)) {
+            // Domini non-SC: esci silenziosamente (nessuna rete, nessun log)
+            return;
+        }
+    })();
+    // Se il dominio è valido, proseguiamo (il bail-out è sopra, ma
+    // per sicurezza controlliamo anche qui con una variabile)
+    if (!/streaming|community|vixcloud|sc-?watch|watch-?sc/i.test(location.hostname || '')) {
+        // Esci senza toccare la rete
+        return;
+    }
 
     const DEFAULTS = {
         wsUrl:  'wss://YOUR_SERVER_HERE/wt',
