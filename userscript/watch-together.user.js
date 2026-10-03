@@ -397,6 +397,7 @@ function extractVideoUrl(url) {
     let autoReconnect = false;
     let persistent = false;
     let autoplayArmed = false;
+    let pendingNavigateFlag = false;
 
     function pickVideo() {
         const vids = Array.from(document.querySelectorAll('video')).filter(v => v.readyState >= 1);
@@ -441,6 +442,7 @@ function extractVideoUrl(url) {
         loadConfig();
         buildUI();
         attachVideoListeners();
+        attachNextEpisodeInterceptor();
 
         pageUrl = await resolvePageUrl();
         log('pageUrl:', pageUrl);
@@ -462,6 +464,15 @@ function extractVideoUrl(url) {
     }
 
     function proceedAfterUrl() {
+        try {
+            const pendNav = sessionStorage.getItem('wt_pending_navigate') === '1';
+            const follNav = sessionStorage.getItem('wt_following_navigate') === '1';
+            sessionStorage.removeItem('wt_pending_navigate');
+            sessionStorage.removeItem('wt_following_navigate');
+            pendingNavigateFlag = pendNav && !follNav;
+            if (pendingNavigateFlag) log('pending navigate flag attivo');
+        } catch (_) {}
+
         const hashRoom = BOOT_HASH_ROOM;
         const hashPass = BOOT_HASH_PASS;
 
@@ -523,6 +534,58 @@ function extractVideoUrl(url) {
         video.addEventListener('play', () => { startTicker(); send({ type: 'play', t: video.currentTime }); });
         video.addEventListener('pause', () => { stopTicker(); send({ type: 'pause', t: video.currentTime }); });
         video.addEventListener('seeked', () => { send({ type: 'seek', t: video.currentTime }); });
+    }
+
+    // =================================================================
+    // INTERCETTA "PROSSIMO EPISODIO" e chiedi conferma
+    // =================================================================
+    function attachNextEpisodeInterceptor() {
+        if (window.__wt_next_ep_hooked) return;
+        window.__wt_next_ep_hooked = true;
+
+        document.addEventListener('click', function (e) {
+            const t = e.target;
+            if (!t || !t.closest) return;
+
+            const btn = t.closest(
+                '.jw-icon.next-episode, ' +
+                '.jw-icon-inline.next-episode, ' +
+                '.jw-icon-next-episode'
+            );
+            if (!btn) return;
+
+            if (!connected || !room) return;
+
+            if (window.__wt_next_ep_ok) {
+                window.__wt_next_ep_ok = false;
+                return;
+            }
+
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+
+            const ok = window.confirm(
+                'Sicuro di voler passare al prossimo episodio?\n\n' +
+                'Tutti i partecipanti della stanza verranno spostati ' +
+                'sul nuovo link.'
+            );
+            if (!ok) return;
+
+            window.__wt_next_ep_ok = true;
+            try {
+                sessionStorage.setItem('wt_pending_navigate', '1');
+                sessionStorage.removeItem('wt_following_navigate');
+            } catch (_) {}
+
+            setTimeout(function () {
+                try {
+                    btn.dispatchEvent(new MouseEvent('click', {
+                        bubbles: true, cancelable: true, view: window,
+                    }));
+                } catch (_) {}
+            }, 30);
+        }, true);
     }
 
     // =================================================================
@@ -1389,6 +1452,8 @@ function extractVideoUrl(url) {
 
         ws.onopen = () => {
             reconnectDelay = RECONNECT_MIN;
+            const navigating = pendingNavigateFlag;
+            pendingNavigateFlag = false;
             try {
                 ws.send(JSON.stringify({
                     type: 'hello',
@@ -1396,10 +1461,11 @@ function extractVideoUrl(url) {
                     persistent: persistent,
                     create: !autoReconnect,
                     ownerToken: getOwnerToken(room),
-                                       url: videoUrl,
+                    url: videoUrl,
                     title: __wt_meta.title,
                     description: __wt_meta.description,
                     image: __wt_image,
+                    navigating: navigating,
                 }));
             } catch (e) { log('send hello fail', e); }
         };
@@ -1436,6 +1502,25 @@ function extractVideoUrl(url) {
                 try {
                     ws.send(JSON.stringify({ type: 'sync-request', room, pass }));
                 } catch (_) {}
+                return;
+            }
+            if (m.type === 'navigate') {
+                if (!m.url) return;
+                const current = extractVideoUrl(
+                    normalizeUrl(pageUrl || location.href)
+                );
+                if (m.url === current) {
+                    log('navigate ignorato (gia su questo URL)');
+                    return;
+                }
+                log('navigate ricevuto, seguo:', m.url);
+                try {
+                    sessionStorage.setItem('wt_following_navigate', '1');
+                    sessionStorage.removeItem('wt_pending_navigate');
+                } catch (_) {}
+                setTimeout(function () {
+                    try { window.location.href = m.url; } catch (_) {}
+                }, 150);
                 return;
             }
             if (m.type === 'persistent-created') {

@@ -443,6 +443,7 @@ async def handler(ws):
 
                 create = msg.get("create", True) is True
                 persistent = msg.get("persistent", False) is True
+                navigating = msg.get("navigating", False) is True
 
                 existing = ROOMS.get(r)
 
@@ -542,7 +543,7 @@ async def handler(ws):
                         existing["image"] = image
                     owner_check = is_owner(existing, ot)
                     if existing_url and url and existing_url != url:
-                        if owner_check or len(existing["clients"]) == 0:
+                        if owner_check or len(existing["clients"]) == 0 or navigating:
                             existing["url"] = url
                             if existing.get("persistent"):
                                 db_upsert(r, existing.get("password", ""),
@@ -550,7 +551,17 @@ async def handler(ws):
                                           title=existing.get("title", ""),
                                           description=existing.get("description", ""),
                                           image=existing.get("image", ""))
-                            log.info(f"stanza {r!r} URL aggiornato a {url!r} (owner)")
+                            log.info(
+                                f"stanza {r!r} URL aggiornato a {url!r} "
+                                f"(owner={owner_check}, navigating={navigating})"
+                            )
+                            if navigating:
+                                await broadcast(r, {
+                                    "type": "navigate",
+                                    "room": r,
+                                    "url": url,
+                                }, skip=ws)
+                                await broadcast_room_list()
                         else:
                             try:
                                 await ws.send(json.dumps({
@@ -777,7 +788,7 @@ async def handler(ws):
                     )
                 log.info(f"URL aggiornato per {room!r}: -> {new_url!r}")
                 await broadcast(room, {
-                    "type": "url-updated",
+                    "type": "navigate",
                     "room": room,
                     "url": new_url,
                 }, skip=ws)
