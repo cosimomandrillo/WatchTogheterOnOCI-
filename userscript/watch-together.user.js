@@ -62,16 +62,24 @@
             if (e.data && e.data[PARENT_REQ]) {
                 console.log('[WT][top] richiesta da', e.origin);
                 try {
-                    e.source.postMessage({ [PARENT_RESP]: location.href }, '*');
+                    const urlToSend = (typeof __WT_ORIGINAL_HREF !== 'undefined' && __WT_ORIGINAL_HREF)
+                        ? __WT_ORIGINAL_HREF
+                        : location.href;
+                    e.source.postMessage({ [PARENT_RESP]: urlToSend }, '*');
                 } catch (err) {
                     console.log('[WT][top] errore:', err);
                 }
             }
-            // Il client iframe chiede di pulire l'hash dall'URL del top
             if (e.data && e.data.__wt_clear_hash__) {
                 try {
                     history.replaceState(null, '', location.pathname + location.search);
                     console.log('[WT][top] hash pulito');
+                } catch (_) {}
+            }
+            if (e.data && e.data.__wt_navigate__ && e.data.url) {
+                try {
+                    console.log('[WT][top] navigo verso', e.data.url);
+                    window.location.href = e.data.url;
                 } catch (_) {}
             }
         });
@@ -93,6 +101,7 @@
     let BOOT_HASH_PERSISTENT = false;
     let BOOT_HASH_OWNER = '';
     let BOOT_HASH_AUTHOR = '';
+    var __WT_ORIGINAL_HREF = location.href;
     try {
         const _hash = location.hash.replace(/^#/, '');
         if (_hash) {
@@ -1239,12 +1248,7 @@ function extractVideoUrl(url) {
                 'Vuoi andare lì e unirti?'
             );
             if (!go) return;
-            try {
-                sessionStorage.setItem(PENDING_KEY, JSON.stringify({
-                    name: name, pass: p, owner: getOwnerToken(name)
-                }));
-            } catch (_) {}
-            window.location.href = targetUrl;
+            navigateTop(buildJoinUrl(targetUrl, name, p));
             return;
         }
 
@@ -1551,6 +1555,31 @@ function extractVideoUrl(url) {
         };
     }
 
+    function navigateTop(url) {
+        if (!url) return;
+        if (IS_TOP) {
+            try { window.location.href = url; } catch (_) {}
+            return;
+        }
+        try {
+            window.top.postMessage({ __wt_navigate__: true, url: url }, '*');
+        } catch (_) {
+            try { window.location.href = url; } catch (_) {}
+        }
+    }
+
+    function buildJoinUrl(baseUrl, roomName, roomPass) {
+        if (!baseUrl || !roomName) return '';
+        const cleanBase = String(baseUrl).split('#')[0];
+        const params = [];
+        params.push('wt_room=' + encodeURIComponent(roomName));
+        if (roomPass) params.push('wt_pass=' + encodeURIComponent(roomPass));
+        if (author)    params.push('wt_author=' + encodeURIComponent(author));
+        const ot = getOwnerToken(roomName);
+        if (ot) params.push('wt_owner=' + encodeURIComponent(ot));
+        return cleanBase + '#' + params.join('&');
+    }
+
     function handleError(m) {
         if (m.code === 'auth') {
             authFailed = true;
@@ -1602,10 +1631,7 @@ function extractVideoUrl(url) {
                     'Vuoi andare lì e unirti?'
                 );
                 if (go && correct) {
-                    try {
-                        sessionStorage.setItem(PENDING_KEY, JSON.stringify({ name: room, pass: pass }));
-                    } catch (_) {}
-                    window.location.href = correct;
+                    navigateTop(buildJoinUrl(correct, room, pass));
                 } else {
                     room = null;
                     localStorage.removeItem(LS.room);
