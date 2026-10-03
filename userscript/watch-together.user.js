@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      4.9.3
+// @version      4.9.4
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -565,11 +565,7 @@ function extractVideoUrl(url) {
         document.addEventListener('click', function (e) {
             const t = e.target;
             if (!t || !t.closest) return;
-            const btn = t.closest(
-                '.jw-icon.next-episode, ' +
-                '.jw-icon-inline.next-episode, ' +
-                '.jw-icon-next-episode'
-            );
+            const btn = t.closest('.next-episode, .jw-icon-next, .jw-icon-next-episode');
             if (!btn) return;
             if (!connected || !room) return;
 
@@ -607,7 +603,7 @@ function extractVideoUrl(url) {
             } catch (_) {}
 
             const joinUrl = buildJoinUrl(next, room, pass);
-            setTimeout(function () { navigateTop(joinUrl); }, 100);
+            navigateTop(joinUrl);
         }, true);
     }
 
@@ -1577,6 +1573,24 @@ function extractVideoUrl(url) {
             try { window.location.href = url; } catch (_) {}
             return;
         }
+        // Metodo 1: postMessage (richiede listener nel top)
+        try {
+            window.top.postMessage({ __wt_navigate__: true, url: url }, '*');
+        } catch (_) {}
+        // Metodo 2: anchor con target=_top (funziona cross-origin senza listener)
+        try {
+            const a = document.createElement('a');
+            a.href = url;
+            a.target = '_top';
+            a.rel = 'noopener';
+            a.style.display = 'none';
+            (document.body || document.documentElement).appendChild(a);
+            a.click();
+            setTimeout(function(){ try { a.remove(); } catch(_){} }, 200);
+        } catch (_) {
+            try { window.location.href = url; } catch (_) {}
+        }
+    }
         try {
             window.top.postMessage({ __wt_navigate__: true, url: url }, '*');
         } catch (_) {

@@ -556,6 +556,7 @@ async def handler(ws):
                                 f"(owner={owner_check}, navigating={navigating})"
                             )
                             if navigating:
+                                log.info(f"NAVIGATE broadcast a {len(existing['clients'])-1} peer(s) per {r!r} -> {url!r}")
                                 await broadcast(r, {
                                     "type": "navigate",
                                     "room": r,
@@ -786,7 +787,7 @@ async def handler(ws):
                         description=ROOMS[room].get("description", ""),
                         image=ROOMS[room].get("image", ""),
                     )
-                log.info(f"URL aggiornato per {room!r}: -> {new_url!r}")
+                log.info(f"URL aggiornato per {room!r}: -> {new_url!r} (broadcast a {len(ROOMS[room]['clients'])-1} peer)")
                 await broadcast(room, {
                     "type": "navigate",
                     "room": room,
