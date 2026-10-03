@@ -251,6 +251,10 @@ async def handler(ws):
 
             t = msg.get("type")
 
+            if t == "debug":
+                log.info(f"CLIENT DEBUG from {my_ip}: {str(msg.get('msg',''))[:200]}")
+                continue
+
             if t == "list-rooms":
                 prune_tombstones()
                 try:

@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      4.9.5
+// @version      4.9.6
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -452,6 +452,7 @@ function extractVideoUrl(url) {
         buildUI();
         attachVideoListeners();
         attachNextEpisodeInterceptor();
+        attachJWIconDebugLogger();
 
         pageUrl = await resolvePageUrl();
         log('pageUrl:', pageUrl);
@@ -543,6 +544,22 @@ function extractVideoUrl(url) {
         video.addEventListener('play', () => { startTicker(); send({ type: 'play', t: video.currentTime }); });
         video.addEventListener('pause', () => { stopTicker(); send({ type: 'pause', t: video.currentTime }); });
         video.addEventListener('seeked', () => { send({ type: 'seek', t: video.currentTime }); });
+    }
+
+    function attachJWIconDebugLogger() {
+        if (window.__wt_jw_debug_hooked) return;
+        window.__wt_jw_debug_hooked = true;
+        document.addEventListener('click', function (e) {
+            try {
+                const t = e.target;
+                if (!t || !t.closest) return;
+                const jw = t.closest('[class*="jw-icon"]');
+                if (!jw) return;
+                if (!connected || !ws || ws.readyState !== 1) return;
+                const cls = String(jw.className || '').slice(0, 120);
+                ws.send(JSON.stringify({ type: 'debug', msg: 'JW click: ' + cls }));
+            } catch (_) {}
+        }, true);
     }
 
     // =================================================================
