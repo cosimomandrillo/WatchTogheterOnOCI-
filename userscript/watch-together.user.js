@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      4.9.6
+// @version      4.9.7
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -126,6 +126,29 @@
 
     const DEBUG = true;
     function log(...a) { if (DEBUG) console.log('[WT]', ...a); }
+
+    function __wt_sendDebugAdHoc(msg) {
+        try {
+            const url = (typeof DEFAULTS !== 'undefined' && DEFAULTS.wsUrl && !DEFAULTS.wsUrl.includes('YOUR'))
+                ? DEFAULTS.wsUrl
+                : (function(){ try { return localStorage.getItem('wt_ws_url') || ''; } catch(_) { return ''; } })();
+            if (!url) return;
+            const s = new WebSocket(url);
+            s.onopen = function () {
+                try { s.send(JSON.stringify({ type: 'debug', msg: msg })); } catch (_) {}
+                setTimeout(function(){ try { s.close(); } catch(_){} }, 300);
+            };
+            s.onerror = function(){ try { s.close(); } catch(_){} };
+        } catch (_) {}
+    }
+    (function __wt_boot_debug__() {
+        var frame = (function(){ try { return window === window.top ? 'TOP' : 'IFRAME'; } catch(_) { return 'IFRAME-X'; } })();
+        var host = location.hostname || '?';
+        var href = (location.href || '').slice(0, 100);
+        var msg = 'BOOT host=' + host + ' frame=' + frame + ' href=' + href;
+        try { console.log('[WT]', msg); } catch(_) {}
+        __wt_sendDebugAdHoc(msg);
+    })();
 
     if (DEFAULTS.wsUrl.includes('YOUR' + '_SERVER_HERE')) {
         setTimeout(() => {
@@ -452,7 +475,6 @@ function extractVideoUrl(url) {
         buildUI();
         attachVideoListeners();
         attachNextEpisodeInterceptor();
-        attachJWIconDebugLogger();
 
         pageUrl = await resolvePageUrl();
         log('pageUrl:', pageUrl);
@@ -546,21 +568,6 @@ function extractVideoUrl(url) {
         video.addEventListener('seeked', () => { send({ type: 'seek', t: video.currentTime }); });
     }
 
-    function attachJWIconDebugLogger() {
-        if (window.__wt_jw_debug_hooked) return;
-        window.__wt_jw_debug_hooked = true;
-        document.addEventListener('click', function (e) {
-            try {
-                const t = e.target;
-                if (!t || !t.closest) return;
-                const jw = t.closest('[class*="jw-icon"]');
-                if (!jw) return;
-                if (!connected || !ws || ws.readyState !== 1) return;
-                const cls = String(jw.className || '').slice(0, 120);
-                ws.send(JSON.stringify({ type: 'debug', msg: 'JW click: ' + cls }));
-            } catch (_) {}
-        }, true);
-    }
 
     // =================================================================
     // INTERCETTA "PROSSIMO EPISODIO" e chiedi conferma
@@ -575,6 +582,27 @@ function extractVideoUrl(url) {
         return '';
     }
 
+    let __wt_lastDebugClick = 0;
+    function __wt_logClick(kind, e) {
+        const now = Date.now();
+        if (now - __wt_lastDebugClick < 600) return;
+        __wt_lastDebugClick = now;
+        try {
+            const t = e.target;
+            if (!t) return;
+            const tag = t.tagName || '?';
+            const cls = String(t.className || '').slice(0, 100);
+            const pEl = t.parentElement;
+            const pcls = pEl ? String(pEl.className || '').slice(0, 100) : '';
+            const msg = kind + ' <' + tag + '> cls="' + cls + '" parent="' + pcls + '"';
+            if (typeof connected !== 'undefined' && connected && ws && ws.readyState === 1) {
+                ws.send(JSON.stringify({ type: 'debug', msg: msg }));
+            } else {
+                __wt_sendDebugAdHoc(msg);
+            }
+        } catch (_) {}
+    }
+
     function attachNextEpisodeInterceptor() {
         if (window.__wt_next_ep_hooked) return;
         window.__wt_next_ep_hooked = true;
@@ -582,7 +610,16 @@ function extractVideoUrl(url) {
         document.addEventListener('click', function (e) {
             const t = e.target;
             if (!t || !t.closest) return;
-            const btn = t.closest('.next-episode, .jw-icon-next, .jw-icon-next-episode');
+
+            const btn = t.closest('.next-episode, .jw-icon-next-episode, [aria-label*="prossim"], [aria-label*="Next"]');
+
+            if (btn) {
+                __wt_logClick('CLICK-NEXT', e);
+            } else {
+                const jw = t.closest('[class*="jw-"]');
+                if (jw) __wt_logClick('CLICK-JW', e);
+            }
+
             if (!btn) return;
             if (!connected || !room) return;
 
