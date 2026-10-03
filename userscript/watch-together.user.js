@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      4.9.7
+// @version      4.9.8
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -579,6 +579,11 @@ function extractVideoUrl(url) {
                 return pre + (parseInt(num, 10) + 1);
             });
         }
+        if (/[?&]episode_id=\d+/.test(url)) {
+            return url.replace(/([?&]episode_id=)(\d+)/, function (_, pre, num) {
+                return pre + (parseInt(num, 10) + 1);
+            });
+        }
         return '';
     }
 
@@ -610,23 +615,24 @@ function extractVideoUrl(url) {
         document.addEventListener('click', function (e) {
             const t = e.target;
             if (!t || !t.closest) return;
-
             const btn = t.closest('.next-episode, .jw-icon-next-episode, [aria-label*="prossim"], [aria-label*="Next"]');
+            if (!btn) return;
 
-            if (btn) {
-                __wt_logClick('CLICK-NEXT', e);
-            } else {
-                const jw = t.closest('[class*="jw-"]');
-                if (jw) __wt_logClick('CLICK-JW', e);
+            __wt_logClick('CLICK-NEXT', e);
+
+            // URL del TOP (SC /it/watch/61): same-origin con /it/iframe/61
+            let topUrl = '';
+            try { topUrl = window.top.location.href; } catch (_) {
+                try { topUrl = window.parent.location.href; } catch (__) {}
+            }
+            if (!topUrl) {
+                log('next-episode: topUrl non leggibile, delego al player');
+                return;
             }
 
-            if (!btn) return;
-            if (!connected || !room) return;
-
-            const current = extractVideoUrl(normalizeUrl(pageUrl || location.href));
-            const next = nextEpisodeUrl(current);
-            if (!next || next === current) {
-                log('next-episode: URL successivo non calcolabile, lascio al player');
+            const nextTop = nextEpisodeUrl(topUrl);
+            if (!nextTop || nextTop === topUrl) {
+                log('next-episode: URL successivo non calcolabile su', topUrl);
                 return;
             }
 
@@ -641,23 +647,49 @@ function extractVideoUrl(url) {
             );
             if (!ok) return;
 
-            log('next-episode:', current, '->', next);
+            log('next-episode:', topUrl, '->', nextTop);
+
+            let roomName = '', roomPass = '', authorName = '';
             try {
-                ws.send(JSON.stringify({
-                    type: 'update-url',
-                    room: room,
-                    pass: pass,
-                    url: next,
-                }));
+                roomName   = localStorage.getItem('wt_room')   || '';
+                roomPass   = localStorage.getItem('wt_pass')   || '';
+                authorName = localStorage.getItem('wt_author') || '?';
             } catch (_) {}
 
-            try {
-                sessionStorage.setItem('wt_pending_navigate', '1');
-                sessionStorage.removeItem('wt_following_navigate');
-            } catch (_) {}
+            // WS ad-hoc: hello + navigating=true (il server broadcasta navigate)
+            if (roomName && DEFAULTS.wsUrl && !DEFAULTS.wsUrl.includes('YOUR')) {
+                try {
+                    const sock = new WebSocket(DEFAULTS.wsUrl);
+                    sock.onopen = function () {
+                        try {
+                            sock.send(JSON.stringify({
+                                type: 'hello',
+                                room: roomName,
+                                pass: roomPass,
+                                author: authorName,
+                                persistent: false,
+                                create: false,
+                                ownerToken: '',
+                                url: nextTop,
+                                navigating: true,
+                            }));
+                        } catch (_) {}
+                        setTimeout(function () { try { sock.close(); } catch(_) {} }, 900);
+                    };
+                    sock.onerror = function () { try { sock.close(); } catch(_) {} };
+                } catch (_) {}
+            }
 
-            const joinUrl = buildJoinUrl(next, room, pass);
-            navigateTop(joinUrl);
+            // Naviga il TOP (same-origin /it/iframe/61 -> /it/watch/61: diretto)
+            setTimeout(function () {
+                try {
+                    if (window.top !== window) {
+                        window.top.location.href = nextTop;
+                        return;
+                    }
+                } catch (_) {}
+                navigateTop(nextTop);
+            }, 200);
         }, true);
     }
 
@@ -1627,9 +1659,14 @@ function extractVideoUrl(url) {
             try { window.location.href = url; } catch (_) {}
             return;
         }
+        // 1) same-origin: accesso diretto alla top
         try {
-            window.top.postMessage({ __wt_navigate__: true, url: url }, '*');
+            if (window.top !== window) {
+                window.top.location.href = url;
+                return;
+            }
         } catch (_) {}
+        // 2) cross-origin: anchor target=_top
         try {
             const a = document.createElement('a');
             a.href = url;
@@ -1639,9 +1676,10 @@ function extractVideoUrl(url) {
             (document.body || document.documentElement).appendChild(a);
             a.click();
             setTimeout(function(){ try { a.remove(); } catch(_){} }, 200);
-        } catch (_) {
-            try { window.location.href = url; } catch (_) {}
-        }
+            return;
+        } catch (_) {}
+        // 3) ultimo tentativo
+        try { window.location.href = url; } catch (_) {}
     }
 
     function buildJoinUrl(baseUrl, roomName, roomPass) {
