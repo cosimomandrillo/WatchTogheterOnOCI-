@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      4.9.4
+// @version      4.9.5
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -1573,11 +1573,9 @@ function extractVideoUrl(url) {
             try { window.location.href = url; } catch (_) {}
             return;
         }
-        // Metodo 1: postMessage (richiede listener nel top)
         try {
             window.top.postMessage({ __wt_navigate__: true, url: url }, '*');
         } catch (_) {}
-        // Metodo 2: anchor con target=_top (funziona cross-origin senza listener)
         try {
             const a = document.createElement('a');
             a.href = url;
@@ -1587,12 +1585,6 @@ function extractVideoUrl(url) {
             (document.body || document.documentElement).appendChild(a);
             a.click();
             setTimeout(function(){ try { a.remove(); } catch(_){} }, 200);
-        } catch (_) {
-            try { window.location.href = url; } catch (_) {}
-        }
-    }
-        try {
-            window.top.postMessage({ __wt_navigate__: true, url: url }, '*');
         } catch (_) {
             try { window.location.href = url; } catch (_) {}
         }
