@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      4.9.1
+// @version      4.9.2
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -565,35 +565,25 @@ function extractVideoUrl(url) {
 
             if (!connected || !room) return;
 
-            if (window.__wt_next_ep_ok) {
-                window.__wt_next_ep_ok = false;
-                return;
-            }
-
-            e.preventDefault();
-            e.stopPropagation();
-            e.stopImmediatePropagation();
-
             const ok = window.confirm(
                 'Sicuro di voler passare al prossimo episodio?\n\n' +
                 'Tutti i partecipanti della stanza verranno spostati ' +
                 'sul nuovo link.'
             );
-            if (!ok) return;
 
-            window.__wt_next_ep_ok = true;
+            if (!ok) {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                return;
+            }
+
+            // Confermato: marca il flag e lascia proseguire il click nativo
+            // del player (nessuna finta pressione necessaria).
             try {
                 sessionStorage.setItem('wt_pending_navigate', '1');
                 sessionStorage.removeItem('wt_following_navigate');
             } catch (_) {}
-
-            setTimeout(function () {
-                try {
-                    btn.dispatchEvent(new MouseEvent('click', {
-                        bubbles: true, cancelable: true, view: window,
-                    }));
-                } catch (_) {}
-            }, 30);
         }, true);
     }
 
@@ -1522,9 +1512,11 @@ function extractVideoUrl(url) {
                     sessionStorage.setItem('wt_following_navigate', '1');
                     sessionStorage.removeItem('wt_pending_navigate');
                 } catch (_) {}
-                setTimeout(function () {
-                    try { window.location.href = m.url; } catch (_) {}
-                }, 150);
+                // Naviga il TOP (il video sta li'), non l'iframe vixcloud.
+                // Includi la stanza nell'hash cosi' al reload l'iframe si
+                // riconnette da solo (no picker, no re-login).
+                const joinUrl = buildJoinUrl(m.url, room, pass);
+                setTimeout(function () { navigateTop(joinUrl); }, 150);
                 return;
             }
             if (m.type === 'persistent-created') {
