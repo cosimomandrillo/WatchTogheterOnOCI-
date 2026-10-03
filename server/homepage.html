@@ -715,6 +715,10 @@
         <input id="joinAuthor" type="text" maxlength="32" placeholder="es. Marco" autocomplete="nickname"></div>
       <div class="row" id="joinPassRow"><label>Password della stanza</label>
         <input id="joinPass" type="password" maxlength="64" placeholder="password" autocomplete="off"></div>
+      <div class="row" style="flex-direction:row;align-items:center;gap:10px;margin-top:6px">
+        <input id="joinRemember" type="checkbox" style="width:18px;height:18px;accent-color:var(--accent);cursor:pointer;flex-shrink:0;margin:0">
+        <label for="joinRemember" style="text-transform:none;letter-spacing:0;font-size:13px;color:var(--text);font-weight:500;cursor:pointer;margin:0">Ricordami su questo dispositivo</label>
+      </div>
     </div>
     <div class="msg" id="joinMsg"></div>
     <div class="modal-actions">
@@ -1107,13 +1111,18 @@ function joinRoom(r){
   pendingJoin = r;
   $('joinTitle').textContent = '"' + r.name + '"';
   $('joinPassRow').style.display = r.hasPassword ? 'flex' : 'none';
-  $('joinPass').value = '';
-  $('joinMsg').textContent = ''; $('joinMsg').className = 'msg';
   var savedAuthor = localStorage.getItem('wt_author') || '';
+  var savedPass = localStorage.getItem('wt_pass_' + r.name) || '';
+  var wasRemembered = localStorage.getItem('wt_remember_' + r.name) === '1';
   $('joinAuthor').value = savedAuthor;
+  $('joinPass').value = savedPass;
+  $('joinRemember').checked = wasRemembered;
+  $('joinMsg').textContent = ''; $('joinMsg').className = 'msg';
   openModal('joinModal');
   setTimeout(function(){
-    (r.hasPassword ? $('joinPass') : $('joinAuthor')).focus();
+    if (r.hasPassword && !savedPass) $('joinPass').focus();
+    else if (!savedAuthor) $('joinAuthor').focus();
+    else $('joinSubmit').focus();
   }, 60);
 }
 $('joinSubmit').onclick = function(){
@@ -1121,10 +1130,19 @@ $('joinSubmit').onclick = function(){
   var r = pendingJoin;
   var author = $('joinAuthor').value.trim();
   var pass = $('joinPass').value;
+  var remember = $('joinRemember').checked;
   var msg = $('joinMsg');
   if (!author || author.length > 32){ msg.className='msg err'; msg.textContent='Inserisci un nome (max 32)'; return; }
   if (r.hasPassword && !pass){ msg.className='msg err'; msg.textContent='Password obbligatoria'; return; }
   localStorage.setItem('wt_author', author);
+
+  if (remember) {
+    localStorage.setItem('wt_remember_' + r.name, '1');
+    if (r.hasPassword) localStorage.setItem('wt_pass_' + r.name, pass);
+  } else {
+    localStorage.removeItem('wt_remember_' + r.name);
+    localStorage.removeItem('wt_pass_' + r.name);
+  }
 
   if (!r.hasPassword){
     var f = 'wt_room=' + encodeURIComponent(r.name) + '&wt_author=' + encodeURIComponent(author);

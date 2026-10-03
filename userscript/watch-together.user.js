@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      4.9.2
+// @version      4.9.3
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -548,6 +548,16 @@ function extractVideoUrl(url) {
     // =================================================================
     // INTERCETTA "PROSSIMO EPISODIO" e chiedi conferma
     // =================================================================
+    function nextEpisodeUrl(url) {
+        if (!url) return '';
+        if (/[?&]e=\d+/.test(url)) {
+            return url.replace(/([?&]e=)(\d+)/, function (_, pre, num) {
+                return pre + (parseInt(num, 10) + 1);
+            });
+        }
+        return '';
+    }
+
     function attachNextEpisodeInterceptor() {
         if (window.__wt_next_ep_hooked) return;
         window.__wt_next_ep_hooked = true;
@@ -555,35 +565,49 @@ function extractVideoUrl(url) {
         document.addEventListener('click', function (e) {
             const t = e.target;
             if (!t || !t.closest) return;
-
             const btn = t.closest(
                 '.jw-icon.next-episode, ' +
                 '.jw-icon-inline.next-episode, ' +
                 '.jw-icon-next-episode'
             );
             if (!btn) return;
-
             if (!connected || !room) return;
+
+            const current = extractVideoUrl(normalizeUrl(pageUrl || location.href));
+            const next = nextEpisodeUrl(current);
+            if (!next || next === current) {
+                log('next-episode: URL successivo non calcolabile, lascio al player');
+                return;
+            }
+
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
 
             const ok = window.confirm(
                 'Sicuro di voler passare al prossimo episodio?\n\n' +
                 'Tutti i partecipanti della stanza verranno spostati ' +
                 'sul nuovo link.'
             );
+            if (!ok) return;
 
-            if (!ok) {
-                e.preventDefault();
-                e.stopPropagation();
-                e.stopImmediatePropagation();
-                return;
-            }
+            log('next-episode:', current, '->', next);
+            try {
+                ws.send(JSON.stringify({
+                    type: 'update-url',
+                    room: room,
+                    pass: pass,
+                    url: next,
+                }));
+            } catch (_) {}
 
-            // Confermato: marca il flag e lascia proseguire il click nativo
-            // del player (nessuna finta pressione necessaria).
             try {
                 sessionStorage.setItem('wt_pending_navigate', '1');
                 sessionStorage.removeItem('wt_following_navigate');
             } catch (_) {}
+
+            const joinUrl = buildJoinUrl(next, room, pass);
+            setTimeout(function () { navigateTop(joinUrl); }, 100);
         }, true);
     }
 
