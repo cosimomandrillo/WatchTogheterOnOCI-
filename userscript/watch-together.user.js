@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      5.1.0
+// @version      5.1.1
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -670,6 +670,13 @@ function extractVideoUrl(url) {
         video.addEventListener('play', () => { send({ type: 'play', t: video.currentTime }); });
         video.addEventListener('pause', () => { send({ type: 'pause', t: video.currentTime }); });
         video.addEventListener('seeked', () => { send({ type: 'seek', t: video.currentTime }); });
+        video.addEventListener('canplay', () => {
+            if (window.__wt_pendingHb) {
+                const hb = window.__wt_pendingHb;
+                window.__wt_pendingHb = null;
+                try { handleHeartbeat(hb); } catch (_) {}
+            }
+        });
     }
 
 
@@ -1825,7 +1832,9 @@ function extractVideoUrl(url) {
                 connected = true;
                 isOwner = !!m.isOwner;
                 isLeader = !!m.isLeader;
-                if (isLeader) startHeartbeat();
+                if (isLeader) {
+                    startHeartbeat();
+                }
                 if (m.ownerToken) {
                     ownerToken = m.ownerToken;
                     setOwnerToken(room, m.ownerToken);
@@ -2262,21 +2271,30 @@ function armUnmuteOnGesture() {
     // =================================================================
     function handleHeartbeat(m) {
         if (!video) return;
+
+        // Se il video non è ancora pronto, memorizza e ritenta su canplay
+        if (video.readyState < 1) {
+            window.__wt_pendingHb = m;
+            return;
+        }
+
         const targetTime = (typeof m.v === 'number') ? m.v : null;
         const targetPlaying = (m.s === 'r');
         const drift = targetTime !== null ? Math.abs(video.currentTime - targetTime) : 0;
 
-        // 1) Stato diverso: forza play o pausa
-        if (targetPlaying && video.paused) {
+        // === STATO PLAY ===
+        if (targetPlaying) {
             if (targetTime !== null && drift > THRESHOLD_TICK) {
                 lock = true;
                 try { video.currentTime = targetTime; } catch (_) {}
                 setTimeout(() => { lock = false; }, 100);
             }
-            tryPlayVideo();
+            if (video.paused) tryPlayVideo();
             return;
         }
-        if (!targetPlaying && !video.paused) {
+
+        // === STATO PAUSA ===
+        if (!video.paused) {
             lock = true;
             try {
                 video.pause();
@@ -2288,8 +2306,8 @@ function armUnmuteOnGesture() {
             return;
         }
 
-        // 2) Stesso stato: correggi solo il drift se supera la soglia
-        if (targetPlaying && !video.paused && targetTime !== null && drift > THRESHOLD_TICK) {
+        // === STATO PAUSA già in pausa: correggi solo drift ===
+        if (targetTime !== null && drift > THRESHOLD_TICK) {
             lock = true;
             try { video.currentTime = targetTime; } catch (_) {}
             setTimeout(() => { lock = false; }, 100);
