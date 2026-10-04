@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      6.2.8
+// @version      6.2.9
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -659,6 +659,29 @@ function extractVideoUrl(url) {
         }, 8000);
     })();
 
+    // FORCE-CONNECT: se dopo 4s c'è una room ma non siamo connessi,
+    // chiama connect() direttamente bypassando la catena async rotta.
+    (function __wt_force_connect_watchdog__() {
+        var tries = 0;
+        var iv = setInterval(function () {
+            tries++;
+            if (connected) { clearInterval(iv); return; }
+            if (tries > 5) { clearInterval(iv); return; }
+            if (tries >= 2) {
+                try {
+                    var r = (typeof room !== 'undefined' && room) ? room
+                          : (function(){ try { return localStorage.getItem('wt_room') || ''; } catch(_){ return ''; } })();
+                    try { __wt_sendDebugAdHoc('FORCE_CONNECT_TRY room=' + r + ' v6.2.9'); } catch (_) {}
+                    if (!r) return;
+                    if (typeof room === 'undefined' || !room) room = r;
+                    if (typeof connect === 'function') connect();
+                } catch (e) {
+                    try { __wt_sendDebugAdHoc('FORCE_CONNECT_ERR ' + (e && e.message || e)); } catch (_) {}
+                }
+            }
+        }, 2000);
+    })();
+
     // Loop che tiene il badge SINCRONIZZATO con __wt_state__ (che sia
     // settato da setStatus o da codice esterno).
     (function __wt_badge_updater_loop__() {
@@ -1174,7 +1197,7 @@ function extractVideoUrl(url) {
         badge.appendChild(badgeUnread);
 
         // Mostra subito qualcosa di utile nel badge (non "WT" default)
-        try { badgeLabel.textContent = 'Init…'; } catch (_) {}
+        try { badgeLabel.textContent = 'Init v6.2.9'; } catch (_) {}
 
         onTap(badge, () => sheetOpen ? closeSheet() : openSheet());
 
@@ -1969,7 +1992,7 @@ function extractVideoUrl(url) {
         else if (state === 'error') { badgeDot.style.animation = 'wt-badge-pop 0.4s ease'; setTimeout(function(){ try { badgeDot.style.animation=''; } catch(_){} }, 500); }
         else badgeDot.style.animation = '';
         if (badge) badge.style.animation = (state === 'connected') ? 'wt-glow 3s ease-in-out infinite' : '';
-        badgeLabel.textContent = text;
+        badgeLabel.textContent = text + ' v6.2.9';
         const headerDot = document.getElementById('__wt_header_dot__');
         if (headerDot) {
             headerDot.style.background = c;
