@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      5.4.1
+// @version      5.4.2
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -2486,110 +2486,200 @@ function armUnmuteOnGesture() {
     // di sistema senza possibilità di overlay DOM. Lo intercettiamo e
     // usiamo CSS fullscreen: video a tutto schermo, ma chat/badge visibili.
     function setupIosFakeFullscreen() {
-        if (!IS_IOS) return;
         if (window.__wt_ios_fs_init) return;
         window.__wt_ios_fs_init = true;
 
-        // Rileva PWA (Add to Home Screen). Solo in PWA il fake fullscreen
-        // CSS ha senso perche' non c'e' la Safari UI a rubare spazio.
-        const isPWA = (window.navigator.standalone === true)
-                   || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
-                   || (window.matchMedia && window.matchMedia('(display-mode: fullscreen)').matches);
+        const isVixCloud = /(^|\.)vixcloud\.co$/i.test(location.hostname);
+        const isSCIframe = /\/it\/iframe\/\d+/.test(location.pathname);
+        const isWatchTop  = IS_TOP && /\/it\/watch\/\d+/.test(location.pathname);
+        const isAnyTop    = IS_TOP;
 
-        log('iOS fullscreen init, PWA=' + isPWA);
+        // ============================================================
+        // A) VIXCLOUD (dove vive il player)
+        // ============================================================
+        if (isVixCloud) {
+            let fsOn = false, savedStyle = null, container = null, exitBtn = null;
 
-        if (!isPWA) {
-            // Browser mode: NON intercettare il pulsante. Lasciamo che iOS
-            // usi il suo fullscreen nativo, che e' meglio di un fake rotto.
-            // Mostra un hint una-tantum per installare come PWA.
-            try {
-                if (!localStorage.getItem('wt_ios_pwa_hint')) {
-                    localStorage.setItem('wt_ios_pwa_hint', '1');
-                    setTimeout(function () {
-                        const t = document.createElement('div');
-                        t.textContent = '\uD83D\uDCA1 Aggiungi alla Home per la chat a schermo intero';
-                        t.style.cssText = [
-                            'position:fixed', 'left:50%', 'bottom:90px',
-                            'transform:translateX(-50%)',
-                            'background:linear-gradient(135deg,#22c55e,#16a34a)',
-                            'color:#fff', 'padding:12px 20px', 'border-radius:999px',
-                            'font:600 13px -apple-system,sans-serif',
-                            'z-index:2147483647',
-                            'box-shadow:0 10px 30px rgba(0,0,0,.5)',
-                            'max-width:90vw', 'text-align:center',
-                            'animation:wt-slide-in .3s ease'
-                        ].join(';');
-                        document.body.appendChild(t);
-                        setTimeout(function () { try { t.remove(); } catch(_){} }, 7000);
-                    }, 3500);
-                }
-            } catch (_) {}
-            return;
-        }
-
-        // === PWA mode: fake fullscreen CSS ===
-        let fakeFsActive = false;
-        let savedStyle = null;
-        let container = null;
-
-        function findContainer() {
-            try {
-                if (video && video.closest) {
-                    const el = video.closest('.jwplayer, [class*="jwplayer"], [class*="jw-media"]');
-                    if (el) return el;
-                }
-                if (video && video.parentElement) return video.parentElement;
+            function findContainer() {
+                try {
+                    if (video && video.closest) {
+                        const el = video.closest('.jwplayer, [class*="jwplayer"], [class*="jw-media"]');
+                        if (el) return el;
+                    }
+                    if (video && video.parentElement) return video.parentElement;
+                } catch (_) {}
                 return document.body;
-            } catch (_) { return document.body; }
+            }
+
+            function showExitBtn() {
+                if (exitBtn) return;
+                exitBtn = document.createElement('div');
+                exitBtn.textContent = '\u2715';
+                exitBtn.style.cssText = [
+                    'position:fixed', 'top:14px', 'left:14px',
+                    'z-index:2147483647',
+                    'width:42px', 'height:42px', 'border-radius:50%',
+                    'background:rgba(0,0,0,.65)', 'color:#fff',
+                    'font:700 24px/1 -apple-system,sans-serif',
+                    'display:flex', 'align-items:center', 'justify-content:center',
+                    'cursor:pointer', '-webkit-tap-highlight-color:transparent',
+                    'backdrop-filter:blur(10px)',
+                    '-webkit-backdrop-filter:blur(10px)',
+                    'box-shadow:0 4px 14px rgba(0,0,0,.5)'
+                ].join(';');
+                exitBtn.onclick = function (e) {
+                    try { e.stopPropagation(); } catch (_) {}
+                    collapse();
+                };
+                document.body.appendChild(exitBtn);
+            }
+            function hideExitBtn() {
+                if (exitBtn) { try { exitBtn.remove(); } catch (_) {} exitBtn = null; }
+            }
+
+            function expand() {
+                if (fsOn) return;
+                container = findContainer();
+                savedStyle = container.getAttribute('style') || '';
+                container.style.cssText += ';' + [
+                    'position:fixed !important',
+                    'top:0 !important', 'left:0 !important',
+                    'width:100vw !important', 'height:100vh !important',
+                    'z-index:2147483000 !important',
+                    'background:#000 !important',
+                    'margin:0 !important'
+                ].join(';') + ';';
+                try { document.documentElement.style.cssText += ';width:100vw!important;height:100vh!important;overflow:hidden!important;margin:0!important;'; } catch (_) {}
+                try { document.body.style.cssText += ';width:100vw!important;height:100vh!important;overflow:hidden!important;margin:0!important;padding:0!important;background:#000!important;'; } catch (_) {}
+                fsOn = true;
+                showExitBtn();
+                try { window.parent.postMessage({ __wt_fs_expand__: true }, '*'); } catch (_) {}
+                log('FS expand (vixcloud)');
+            }
+
+            function collapse() {
+                if (!fsOn) return;
+                try { if (container && savedStyle !== null) container.setAttribute('style', savedStyle); } catch (_) {}
+                try { document.documentElement.removeAttribute('style'); } catch (_) {}
+                try { document.body.removeAttribute('style'); } catch (_) {}
+                fsOn = false;
+                hideExitBtn();
+                try { window.parent.postMessage({ __wt_fs_collapse__: true }, '*'); } catch (_) {}
+                log('FS collapse (vixcloud)');
+            }
+
+            document.addEventListener('click', function (e) {
+                const t = e.target;
+                if (!t || !t.closest) return;
+                const btn = t.closest(
+                    '.jw-icon-fullscreen, .jw-icon-fullscreen-on, .jw-icon-fullscreen-off, ' +
+                    '[aria-label*="ullscreen"], [aria-label*="chermo Intero"], [aria-label*="chermo intero"]'
+                );
+                if (!btn) return;
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                if (fsOn) collapse(); else expand();
+            }, true);
+
+            window.addEventListener('message', function (e) {
+                if (e.data && e.data.__wt_fs_collapse__ && fsOn) collapse();
+            });
         }
 
-        function enterFs() {
-            if (fakeFsActive) return;
-            container = findContainer();
-            if (!container) return;
-            savedStyle = container.getAttribute('style') || '';
-            container.style.cssText += ';' + [
-                'position:fixed !important',
-                'top:0 !important', 'left:0 !important',
-                'width:100vw !important', 'height:100vh !important',
-                'z-index:2147483000 !important',
-                'background:#000 !important'
-            ].join(';') + ';';
-            try { document.documentElement.style.overflow = 'hidden'; } catch (_) {}
-            try { document.body.style.overflow = 'hidden'; } catch (_) {}
-            fakeFsActive = true;
-            log('PWA fake fullscreen ON');
+        // ============================================================
+        // B) SC IFRAME (/it/iframe/NNN) — same-origin col top
+        // ============================================================
+        if (isSCIframe && !isVixCloud) {
+            let selfOn = false, selfSaved = null;
+            window.addEventListener('message', function (e) {
+                if (!e.data) return;
+                if (e.data.__wt_fs_expand__) {
+                    if (!selfOn) {
+                        selfSaved = document.body.getAttribute('style') || '';
+                        document.body.style.cssText += ';' + [
+                            'position:fixed !important',
+                            'top:0 !important', 'left:0 !important',
+                            'width:100vw !important', 'height:100vh !important',
+                            'margin:0 !important', 'padding:0 !important',
+                            'overflow:hidden !important',
+                            'background:#000 !important',
+                            'z-index:2147482000 !important'
+                        ].join(';') + ';';
+                        try { document.documentElement.style.cssText += ';width:100vw!important;height:100vh!important;overflow:hidden!important;margin:0!important;'; } catch (_) {}
+                        // Assicura che l'iframe figlio sia 100%
+                        try {
+                            document.querySelectorAll('iframe').forEach(function (f) {
+                                f.style.cssText += ';width:100%!important;height:100%!important;border:0!important;display:block!important;';
+                            });
+                        } catch (_) {}
+                        selfOn = true;
+                    }
+                    try { window.top.postMessage({ __wt_fs_expand__: true }, '*'); } catch (_) {}
+                    log('FS expand (SC iframe)');
+                }
+                if (e.data.__wt_fs_collapse__) {
+                    if (selfOn && selfSaved !== null) {
+                        document.body.setAttribute('style', selfSaved);
+                        selfOn = false;
+                    }
+                    try { document.documentElement.removeAttribute('style'); } catch (_) {}
+                    try { window.top.postMessage({ __wt_fs_collapse__: true }, '*'); } catch (_) {}
+                    log('FS collapse (SC iframe)');
+                }
+            });
         }
 
-        function exitFs() {
-            if (!fakeFsActive) return;
-            try {
-                if (container && savedStyle !== null) container.setAttribute('style', savedStyle);
-            } catch (_) {}
-            try { document.documentElement.style.overflow = ''; } catch (_) {}
-            try { document.body.style.overflow = ''; } catch (_) {}
-            fakeFsActive = false;
-            log('PWA fake fullscreen OFF');
+        // ============================================================
+        // C) TOP (streamingcommunity.../it/watch/NNN)
+        // ============================================================
+        if (isWatchTop) {
+            let topOn = false, topSaved = null, hidden = [];
+            window.addEventListener('message', function (e) {
+                if (!e.data) return;
+                if (e.data.__wt_fs_expand__) {
+                    if (topOn) return;
+                    topSaved = document.body.getAttribute('style') || '';
+                    // Nascondi tutto tranne .watch e <style>/<script>
+                    document.querySelectorAll('body > *').forEach(function (el) {
+                        if (el.classList && el.classList.contains('watch')) return;
+                        if (el.tagName === 'SCRIPT' || el.tagName === 'STYLE') return;
+                        hidden.push({ el: el, disp: el.style.display });
+                        el.style.display = 'none';
+                    });
+                    const w = document.querySelector('.watch');
+                    if (w) w.style.cssText += ';' + [
+                        'position:fixed !important',
+                        'top:0 !important', 'left:0 !important',
+                        'width:100vw !important', 'height:100vh !important',
+                        'margin:0 !important', 'padding:0 !important',
+                        'z-index:2147482000 !important',
+                        'background:#000 !important'
+                    ].join(';') + ';';
+                    try {
+                        document.querySelectorAll('.watch iframe').forEach(function (f) {
+                            f.style.cssText += ';width:100%!important;height:100%!important;border:0!important;display:block!important;';
+                        });
+                    } catch (_) {}
+                    try { document.documentElement.style.cssText += ';overflow:hidden!important;margin:0!important;'; } catch (_) {}
+                    try { document.body.style.cssText += ';overflow:hidden!important;margin:0!important;padding:0!important;background:#000!important;'; } catch (_) {}
+                    topOn = true;
+                    log('FS expand (top)');
+                }
+                if (e.data.__wt_fs_collapse__) {
+                    if (!topOn) return;
+                    if (topSaved !== null) document.body.setAttribute('style', topSaved);
+                    hidden.forEach(function (o) { try { o.el.style.display = o.disp || ''; } catch (_) {} });
+                    hidden = [];
+                    const w = document.querySelector('.watch');
+                    if (w) w.setAttribute('style', '');
+                    try { document.documentElement.removeAttribute('style'); } catch (_) {}
+                    try { document.body.removeAttribute('style'); } catch (_) {}
+                    topOn = false;
+                    log('FS collapse (top)');
+                }
+            });
         }
-
-        document.addEventListener('click', function (e) {
-            const t = e.target;
-            if (!t || !t.closest) return;
-            const btn = t.closest(
-                '.jw-icon-fullscreen, .jw-icon-fullscreen-on, .jw-icon-fullscreen-off, ' +
-                '[aria-label*="ullscreen"], [aria-label*="chermo Intero"], [aria-label*="chermo intero"]'
-            );
-            if (!btn) return;
-            e.preventDefault();
-            e.stopPropagation();
-            e.stopImmediatePropagation();
-            if (fakeFsActive) exitFs();
-            else enterFs();
-        }, true);
-
-        document.addEventListener('keydown', function (e) {
-            if (e.key === 'Escape' && fakeFsActive) exitFs();
-        });
     }
 
     function handle(m) {
