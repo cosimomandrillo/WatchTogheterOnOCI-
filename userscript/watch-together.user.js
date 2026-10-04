@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      6.1.3
+// @version      6.1.4
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -1077,7 +1077,7 @@ function extractVideoUrl(url) {
             'background:rgba(18, 18, 22, 0.82)',
             'backdrop-filter:blur(8px) saturate(140%)',
             '-webkit-backdrop-filter:blur(8px) saturate(140%)',
-            'transition:transform .25s cubic-bezier(.32,.72,0,1), opacity .2s ease'
+            'transition:transform .22s cubic-bezier(.32,.72,0,1), opacity .2s ease'
         ].join(';'));
 
         if (IS_MOBILE) {
@@ -1741,25 +1741,52 @@ function extractVideoUrl(url) {
         closeOptions();
         try { __wt_appendToCorrectParent(sheet); } catch (_) {}
         sheet.style.display = 'flex';
+        // Stato iniziale "collassato" per l'animazione di apertura
+        if (IS_MOBILE) {
+            sheet.style.transform = 'translateY(100%) scale(.9)';
+            sheet.style.opacity = '0';
+            sheet.style.transformOrigin = 'bottom center';
+        } else {
+            sheet.style.transform = 'scale(.5)';
+            sheet.style.opacity = '0';
+            sheet.style.transformOrigin = 'top right';
+        }
         try { __wt_updateSheetPos(); } catch (_) {}
         try { __wt_clampSheetHeight(); } catch (_) {}
         setTimeout(function () { try { __wt_clampSheetHeight(); } catch (_) {} }, 60);
         requestAnimationFrame(() => {
-            if (IS_MOBILE) sheet.style.transform = 'translateY(0)';
-            else { sheet.style.transform = 'translateY(0) scale(1)'; sheet.style.opacity = '1'; }
+            requestAnimationFrame(() => {
+                sheet.style.transform = 'scale(1)';
+                sheet.style.opacity = '1';
+            });
         });
         unread = 0;
         updateUnread();
-        if (!IS_MOBILE) setTimeout(() => sheetInput.focus(), 300);
+        if (!IS_MOBILE) setTimeout(() => sheetInput.focus(), 320);
     }
 
     function closeSheet() {
         if (!sheetOpen) return;
         sheetOpen = false;
-        try { __wt_resetSheetPos(); } catch (_) {}
-        if (IS_MOBILE) sheet.style.transform = 'translateY(100%)';
-        else sheet.style.transform = 'translateY(-8px) scale(.98)';
-        setTimeout(() => { sheet.style.display = 'none'; }, 250);
+
+        // PRIMA: applica l'animazione di shrink/fade
+        if (IS_MOBILE) {
+            sheet.style.transform = 'translateY(100%) scale(.9)';
+            sheet.style.opacity = '0';
+        } else {
+            sheet.style.transform = 'scale(.5)';
+            sheet.style.opacity = '0';
+        }
+
+        // DOPO la transizione: nascondi e resetta la posizione.
+        // Il reset deve avvenire DOPO il display:none, altrimenti la
+        // sheet perde max-height mentre è ancora visibile e "esplode"
+        // in dimensione (bug overflow).
+        setTimeout(() => {
+            sheet.style.display = 'none';
+            try { __wt_resetSheetPos(); } catch (_) {}
+        }, 240);
+
         if (document.activeElement === sheetInput) sheetInput.blur();
     }
 
@@ -1777,16 +1804,37 @@ function extractVideoUrl(url) {
         if (box) box.style.display = (isOwner && connected) ? 'block' : 'none';
         try { __wt_appendToCorrectParent(optionsPanel); } catch (_) {}
         optionsPanel.style.display = 'flex';
+        if (IS_MOBILE) {
+            optionsPanel.style.transformOrigin = 'bottom center';
+            optionsPanel.style.transform = 'translateY(100%) scale(.9)';
+        } else {
+            optionsPanel.style.transformOrigin = 'top right';
+            optionsPanel.style.transform = 'scale(.5)';
+        }
+        optionsPanel.style.opacity = '0';
         requestAnimationFrame(() => {
-            if (IS_MOBILE) optionsPanel.style.transform = 'translateY(0)';
+            requestAnimationFrame(() => {
+                optionsPanel.style.transform = 'scale(1)';
+                optionsPanel.style.opacity = '1';
+            });
         });
     }
 
     function closeOptions() {
         if (!optionsOpen) return;
         optionsOpen = false;
-        if (IS_MOBILE) optionsPanel.style.transform = 'translateY(100%)';
-        setTimeout(() => { optionsPanel.style.display = 'none'; }, 250);
+        if (IS_MOBILE) {
+            optionsPanel.style.transform = 'translateY(100%) scale(.9)';
+            optionsPanel.style.opacity = '0';
+        } else {
+            optionsPanel.style.transform = 'scale(.5)';
+            optionsPanel.style.opacity = '0';
+        }
+        setTimeout(() => {
+            optionsPanel.style.display = 'none';
+            optionsPanel.style.transform = '';
+            optionsPanel.style.opacity = '';
+        }, 240);
     }
 
     // =================================================================
