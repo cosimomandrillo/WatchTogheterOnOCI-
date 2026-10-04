@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      6.2.3
+// @version      6.2.4
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -45,22 +45,6 @@
         wsUrl:  'wss://YOUR_SERVER_HERE/wt',
         author: 'Anon',
     };
-
-    // Fallback: se nginx sub_filter non ha sostituito il placeholder, prova
-    // a ricostruire l'URL dal dominio corrente (funziona solo nel top frame
-    // di un dominio "server WT" - non dentro vixcloud/SC).
-    if (DEFAULTS.wsUrl.indexOf('YOUR' + '_SERVER_HERE') !== -1) {
-        try {
-            var h = location.hostname || '';
-            var isWT = h && !/vixcloud|streamingcommunity/i.test(h);
-            if (isWT) {
-                DEFAULTS.wsUrl = 'wss://' + h + '/wt';
-                console.warn('[WT] sub_filter inattivo, fallback URL:', DEFAULTS.wsUrl);
-            } else {
-                console.warn('[WT] sub_filter inattivo, dominio non deducibile da iframe:', h);
-            }
-        } catch (_) {}
-    }
 
     // =================================================================
     // TOP FRAME LISTENER
@@ -623,6 +607,25 @@ function extractVideoUrl(url) {
             try { __wt_sendDebugAdHoc(msg); } catch (_) {}
         }
     }, 3000);
+
+    // Bootstrap UI: crea il badge immediatamente, senza aspettare il video.
+    // Garantisce che il badge sia SEMPRE visibile, anche se il player
+    // non è ancora pronto o se boot() fallisce per qualche motivo.
+    (function __wt_bootstrap_ui__() {
+        var tries = 0;
+        function tryBuild() {
+            if (!document.body) {
+                if (++tries < 12) setTimeout(tryBuild, 150);
+                return;
+            }
+            try {
+                if (!document.getElementById('__wt_badge__')) buildUI();
+            } catch (e) {
+                console.error('[WT] buildUI bootstrap error:', e);
+            }
+        }
+        tryBuild();
+    })();
 
     log('cerco <video>…');
     const waitVideo = setInterval(() => {
