@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      6.2.9
+// @version      6.3.0
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -274,18 +274,33 @@
         document.addEventListener('keypress', guard, true);
     })();
 
-    function __wt_sendDebugAdHoc(msg) {
+    // Debug BUFFERIZZATO: niente WebSocket dedicati (esaurivano le risorse
+    // WS del browser e facevano fallire la connessione reale). Accumula in
+    // memoria e invia tramite il WebSocket principale quando è pronto.
+    var __wt_debug_buffer = [];
+    function __wt_debug(msg) {
+        try { console.log('[WT]', msg); } catch (_) {}
         try {
-            const url = (typeof DEFAULTS !== 'undefined' && DEFAULTS.wsUrl && !DEFAULTS.wsUrl.includes('YOUR'))
-                ? DEFAULTS.wsUrl
-                : (function(){ try { return localStorage.getItem('wt_ws_url') || ''; } catch(_) { return ''; } })();
-            if (!url) return;
-            const s = new WebSocket(url);
-            s.onopen = function () {
-                try { s.send(JSON.stringify({ type: 'debug', msg: msg })); } catch (_) {}
-                setTimeout(function(){ try { s.close(); } catch(_){} }, 300);
-            };
-            s.onerror = function(){ try { s.close(); } catch(_){} };
+            __wt_debug_buffer.push({ t: Date.now(), msg: String(msg).slice(0, 180) });
+            if (__wt_debug_buffer.length > 40) __wt_debug_buffer.shift();
+            if (typeof ws !== 'undefined' && ws && ws.readyState === 1) {
+                while (__wt_debug_buffer.length) {
+                    var b = __wt_debug_buffer.shift();
+                    try { ws.send(JSON.stringify({ type: 'debug', msg: b.msg })); } catch (_) { break; }
+                }
+            }
+        } catch (_) {}
+    }
+    // Alias retro-compatibile: NON apre più WS
+    function __wt_sendDebugAdHoc(msg) { __wt_debug(msg); }
+    function __wt_flush_debug() {
+        try {
+            if (ws && ws.readyState === 1 && __wt_debug_buffer.length) {
+                __wt_debug_buffer.forEach(function (b) {
+                    try { ws.send(JSON.stringify({ type: 'debug', msg: b.msg })); } catch (_) {}
+                });
+                __wt_debug_buffer = [];
+            }
         } catch (_) {}
     }
     (function __wt_boot_debug__() {
@@ -663,23 +678,24 @@ function extractVideoUrl(url) {
     // chiama connect() direttamente bypassando la catena async rotta.
     (function __wt_force_connect_watchdog__() {
         var tries = 0;
-        var iv = setInterval(function () {
+        var delays = [3000, 6000, 12000];  // backoff esponenziale
+        function tick() {
             tries++;
-            if (connected) { clearInterval(iv); return; }
-            if (tries > 5) { clearInterval(iv); return; }
-            if (tries >= 2) {
-                try {
-                    var r = (typeof room !== 'undefined' && room) ? room
-                          : (function(){ try { return localStorage.getItem('wt_room') || ''; } catch(_){ return ''; } })();
-                    try { __wt_sendDebugAdHoc('FORCE_CONNECT_TRY room=' + r + ' v6.2.9'); } catch (_) {}
-                    if (!r) return;
-                    if (typeof room === 'undefined' || !room) room = r;
-                    if (typeof connect === 'function') connect();
-                } catch (e) {
-                    try { __wt_sendDebugAdHoc('FORCE_CONNECT_ERR ' + (e && e.message || e)); } catch (_) {}
-                }
+            if (connected) return;
+            if (tries > delays.length) return;
+            try {
+                var r = (typeof room !== 'undefined' && room) ? room
+                      : (function(){ try { return localStorage.getItem('wt_room') || ''; } catch(_){ return ''; } })();
+                __wt_debug('FORCE_CONNECT_TRY room=' + r + ' try=' + tries);
+                if (!r) { setTimeout(tick, delays[tries] || 12000); return; }
+                if (typeof room === 'undefined' || !room) room = r;
+                if (typeof connect === 'function') connect();
+            } catch (e) {
+                __wt_debug('FORCE_CONNECT_ERR ' + (e && e.message || e));
             }
-        }, 2000);
+            if (tries < delays.length) setTimeout(tick, delays[tries]);
+        }
+        setTimeout(tick, delays[0]);
     })();
 
     // Loop che tiene il badge SINCRONIZZATO con __wt_state__ (che sia
@@ -2227,6 +2243,7 @@ function extractVideoUrl(url) {
 
         ws.onopen = () => {
             reconnectDelay = RECONNECT_MIN;
+            try { __wt_flush_debug(); } catch (_) {}
             const navigating = pendingNavigateFlag;
             pendingNavigateFlag = false;
             try {
