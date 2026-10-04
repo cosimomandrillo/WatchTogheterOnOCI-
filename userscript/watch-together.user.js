@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      6.1.5
+// @version      6.2.0
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -1079,6 +1079,7 @@ function extractVideoUrl(url) {
             '-webkit-backdrop-filter:blur(8px) saturate(140%)',
             'transition:transform .22s cubic-bezier(.32,.72,0,1), opacity .2s ease'
         ].join(';'));
+        sheet.id = '__wt_sheet__';
 
         if (IS_MOBILE) {
             sheet.style.cssText += ';left:0;right:0;bottom:0;height:auto;max-height:calc(100dvh / 2);' +
@@ -2835,6 +2836,10 @@ function armUnmuteOnGesture() {
     @keyframes wt-status-pulse-warn { 0%,100% { box-shadow: 0 0 0 3px rgba(245,158,11,.28), 0 0 10px rgba(245,158,11,.6); } 50% { box-shadow: 0 0 0 6px rgba(245,158,11,.15), 0 0 20px rgba(245,158,11,.9); } }
     @keyframes wt-typing-bounce { 0%,60%,100% { transform: translateY(0); opacity: .35; } 30% { transform: translateY(-4px); opacity: 1; } }
     @keyframes wt-row-in { 0% { opacity: 0; transform: translateX(-8px); } 100% { opacity: 1; transform: translateX(0); } }
+    #__wt_sheet__ { width: 100px !important; min-width: 100px !important; max-width: 100px !important; }
+    @media (max-width: 700px) { #__wt_sheet__ { width: auto !important; min-width: 0 !important; max-width: none !important; } }
+    #__wt_sheet__ * { word-break: break-word; overflow-wrap: anywhere; }
+    #__wt_sheet__ input, #__wt_sheet__ textarea { min-width: 0 !important; width: 100%; }
     @keyframes wt-glow { 0%,100% { box-shadow: 0 4px 24px rgba(0,0,0,.85), 0 0 0 1px rgba(0,0,0,.4); } 50% { box-shadow: 0 4px 24px rgba(0,0,0,.85), 0 0 0 1px rgba(0,0,0,.4), 0 0 24px rgba(34,197,94,.4); } }
     `;
     (document.head || document.documentElement).appendChild(styleTag);
