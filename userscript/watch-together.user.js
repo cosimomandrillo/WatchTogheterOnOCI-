@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      6.0.0
+// @version      6.0.1
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -229,6 +229,48 @@
 
     const DEBUG = true;
     function log(...a) { if (DEBUG) console.log('[WT]', ...a); }
+
+    // =============================================================
+    // KEY GUARD
+    // Impedisce al player (JW Player su vixcloud) di ricevere i
+    // tasti mentre l'utente scrive in un input: senza questo, la
+    // barra spaziatrice fa play/pausa e le frecce fanno seek anche
+    // mentre stai digitando un messaggio in chat.
+    // =============================================================
+    (function __wt_install_key_guard__() {
+        if (window.__wt_key_guard__) return;
+        window.__wt_key_guard__ = true;
+
+        function isTypingTarget(el) {
+            if (!el) return false;
+            const tag = (el.tagName || '').toUpperCase();
+            if (tag === 'INPUT' || tag === 'TEXTAREA') return true;
+            if (el.isContentEditable === true) return true;
+            return false;
+        }
+
+        function guard(e) {
+            const t = e.target;
+            if (!isTypingTarget(t)) return;
+
+            // Gestione Enter per l'input della chat (sendChat è hoisted)
+            if (e.type === 'keydown' && e.key === 'Enter' && !e.shiftKey) {
+                if (t.id === '__wt_chat_input__') {
+                    try { e.preventDefault(); } catch (_) {}
+                    try { if (typeof sendChat === 'function') sendChat(); } catch (_) {}
+                }
+            }
+
+            // stopImmediatePropagation blocca i listener di JW Player
+            // ma NON il default action del browser: il carattere viene
+            // comunque digitato correttamente.
+            try { e.stopImmediatePropagation(); } catch (_) {}
+        }
+
+        document.addEventListener('keydown',  guard, true);
+        document.addEventListener('keyup',    guard, true);
+        document.addEventListener('keypress', guard, true);
+    })();
 
     function __wt_sendDebugAdHoc(msg) {
         try {
@@ -1072,6 +1114,7 @@ function extractVideoUrl(url) {
                         '-webkit-text-size-adjust:100%'
         ].join(';'));
         sheetInput.type = 'text';
+        sheetInput.id = '__wt_chat_input__';
         sheetInput.placeholder = 'Scrivi un messaggio…';
         sheetInput.maxLength = 500;
         sheetInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); sendChat(); } });
@@ -1569,11 +1612,61 @@ function extractVideoUrl(url) {
     }
 
     // =================================================================
+    // =============================================================
+    // KEYBOARD MOBILE
+    // Su iOS la tastiera virtuale NON riduce il layout viewport ma
+    // solo il visual viewport. Un elemento position:fixed con
+    // bottom:0 resta nascosto sotto la tastiera. Usiamo l'API
+    // visualViewport per riposizionare la sheet sopra la tastiera.
+    // =============================================================
+    function __wt_updateSheetPos() {
+        if (!sheet || !IS_MOBILE || !sheetOpen) return;
+        const vv = window.visualViewport;
+        if (!vv) return;
+        const kbHeight = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+        sheet.style.bottom = kbHeight + 'px';
+        const avail = vv.height - 20;
+        const newH = Math.max(180, Math.min(window.innerHeight * 0.55, avail * 0.65));
+        sheet.style.height = newH + 'px';
+        sheet.style.maxHeight = newH + 'px';
+    }
+    function __wt_resetSheetPos() {
+        if (!sheet) return;
+        sheet.style.bottom = '';
+        sheet.style.height = '';
+        sheet.style.maxHeight = '';
+    }
+    if (window.visualViewport) {
+        try {
+            window.visualViewport.addEventListener('resize', __wt_updateSheetPos);
+            window.visualViewport.addEventListener('scroll', __wt_updateSheetPos);
+        } catch (_) {}
+    }
+    window.addEventListener('resize', __wt_updateSheetPos);
+    window.addEventListener('orientationchange', function () {
+        setTimeout(__wt_updateSheetPos, 50);
+    });
+    // Anche il focus/blur dell'input triggera il ricalcolo
+    document.addEventListener('focusin', function (e) {
+        const t = e.target;
+        if (!t) return;
+        const tag = (t.tagName || '').toUpperCase();
+        if (tag === 'INPUT' || tag === 'TEXTAREA') {
+            setTimeout(__wt_updateSheetPos, 80);
+            setTimeout(__wt_updateSheetPos, 320);
+        }
+    }, true);
+    document.addEventListener('focusout', function () {
+        setTimeout(__wt_updateSheetPos, 80);
+        setTimeout(__wt_updateSheetPos, 320);
+    }, true);
+
     function openSheet() {
         sheetOpen = true;
         closeOptions();
         try { __wt_appendToCorrectParent(sheet); } catch (_) {}
         sheet.style.display = 'flex';
+        try { __wt_updateSheetPos(); } catch (_) {}
         requestAnimationFrame(() => {
             if (IS_MOBILE) sheet.style.transform = 'translateY(0)';
             else { sheet.style.transform = 'translateY(0) scale(1)'; sheet.style.opacity = '1'; }
@@ -1586,6 +1679,7 @@ function extractVideoUrl(url) {
     function closeSheet() {
         if (!sheetOpen) return;
         sheetOpen = false;
+        try { __wt_resetSheetPos(); } catch (_) {}
         if (IS_MOBILE) sheet.style.transform = 'translateY(100%)';
         else sheet.style.transform = 'translateY(-8px) scale(.98)';
         setTimeout(() => { sheet.style.display = 'none'; }, 250);
@@ -1795,6 +1889,7 @@ function extractVideoUrl(url) {
         row.appendChild(col);
         sheetList.appendChild(row);
         sheetList.scrollTop = sheetList.scrollHeight;
+        try { __wt_updateSheetPos(); } catch (_) {}
         if (!isOwn && !sheetOpen) { unread++; updateUnread(); }
     }
 
