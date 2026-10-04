@@ -630,6 +630,7 @@ async def handler(ws):
                     r_obj["leader_ws"] = ws
                 is_leader = r_obj["leader_ws"] is ws
 
+                log.info(f"hello/welcome: {author!r} -> {r!r} clients={len(ROOMS[r]['clients'])} leader={is_leader} da {my_ip}")
                 try:
                     await ws.send(json.dumps({
                         "type": "welcome",

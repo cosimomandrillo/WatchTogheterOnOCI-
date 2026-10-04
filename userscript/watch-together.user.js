@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      6.3.2
+// @version      6.3.3
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -65,8 +65,8 @@
                 console.log('[WT][top] richiesta da', e.origin);
                 try {
                     const urlToSend = (typeof __WT_ORIGINAL_HREF !== 'undefined' && __WT_ORIGINAL_HREF)
-                        ? __WT_ORIGINAL_HREF
-                        : location.href;
+                    ? __WT_ORIGINAL_HREF
+                    : location.href;
                     e.source.postMessage({ [PARENT_RESP]: urlToSend }, '*');
                 } catch (err) {
                     console.log('[WT][top] errore:', err);
@@ -345,9 +345,9 @@
 
     const LS = {
         wsUrl:  'wt_ws_url',
- room:   'wt_room',
- pass:   'wt_pass',
- author: 'wt_author',
+        room:   'wt_room',
+        pass:   'wt_pass',
+        author: 'wt_author',
     };
 
     const URL_IGNORE_PARAMS = [
@@ -481,13 +481,13 @@
         }
     }
 
-    
 
-    
+
+
 
     const EPISODE_PARAMS = ['e', 'ep', 'episode', 'episode_id', 's', 'season'];
 
-            function extractRoomImage() {
+    function extractRoomImage() {
         try {
             var og = document.querySelector('meta[property="og:image"]');
             if (og) {
@@ -500,7 +500,7 @@
         return '';
     }
 
-function extractVideoMeta() {
+    function extractVideoMeta() {
         var title = '';
         var description = '';
         try {
@@ -529,11 +529,11 @@ function extractVideoMeta() {
         } catch (_) {}
         return {
             title: title.replace(/\s+/g, ' ').slice(0, 200),
-            description: description.replace(/\s+/g, ' ').slice(0, 300)
+ description: description.replace(/\s+/g, ' ').slice(0, 300)
         };
     }
 
-function extractVideoUrl(url) {
+    function extractVideoUrl(url) {
         if (!url) return '';
         var m = url.match(/(https?:\/\/[^\/]+\/(?:it\/)?watch\/\d+)(\?[^\s#]*)?/);
         if (m) {
@@ -649,6 +649,11 @@ function extractVideoUrl(url) {
     // Garantisce che il badge sia SEMPRE visibile, anche se il player
     // non è ancora pronto o se boot() fallisce per qualche motivo.
     (function __wt_bootstrap_ui__() {
+        // FIX: il top frame e l'iframe SC non hanno il <video> e non si
+        // connettono mai: un badge li' mostrava solo "Timeout: WT" e
+        // pannello con "undefined". Il badge compare solo dove c'e' il player
+        // (buildUI viene comunque chiamato quando il <video> viene trovato).
+        if (IS_TOP || !/vixcloud/i.test(location.hostname || '')) return;
         var tries = 0;
         function tryBuild() {
             if (!document.body) {
@@ -667,7 +672,7 @@ function extractVideoUrl(url) {
     // Watchdog: se dopo 8s non siamo connessi, mostra lo stato nel badge
     (function __wt_boot_watchdog__() {
         setTimeout(function () {
-            if (connected) return;
+            if (connected || !video) return;  // FIX: frame senza video = nessun timeout
             var st = (window.__wt_state__ || {}).text || 'WT';
             setStatus('connecting', 'Timeout: ' + st);
             try { __wt_sendDebugAdHoc('WATCHDOG_TIMEOUT state=' + st); } catch (_) {}
@@ -682,10 +687,11 @@ function extractVideoUrl(url) {
         function tick() {
             tries++;
             if (connected) return;
+            if (typeof video === 'undefined' || !video) { if (tries <= delays.length) setTimeout(tick, delays[tries - 1] || 12000); return; }
             if (tries > delays.length) return;
             try {
                 var r = (typeof room !== 'undefined' && room) ? room
-                      : (function(){ try { return localStorage.getItem('wt_room') || ''; } catch(_){ return ''; } })();
+                : (function(){ try { return localStorage.getItem('wt_room') || ''; } catch(_){ return ''; } })();
                 __wt_debug('FORCE_CONNECT_TRY room=' + r + ' try=' + tries);
                 if (!r) { setTimeout(tick, delays[tries] || 12000); return; }
                 if (typeof video === 'undefined' || !video) {
@@ -1002,7 +1008,7 @@ function extractVideoUrl(url) {
         const byE = {};
         eps.forEach(function (x) { if (!byE[x.e]) byE[x.e] = x; });
         const sorted = Object.keys(byE).map(function (k) { return byE[k]; })
-            .sort(function (a, b) { return a.e - b.e; });
+        .sort(function (a, b) { return a.e - b.e; });
 
         const curM = (topHref || '').match(/[?&](?:e|episode_id)=(\d+)/);
         const curE = curM ? parseInt(curM[1], 10) : null;
@@ -1212,11 +1218,11 @@ function extractVideoUrl(url) {
         badgeDot = document.createElement('span');
         badgeDot.style.cssText = [
             'display:inline-block',
-            'width:' + dotSize + 'px', 'height:' + dotSize + 'px',
-            'min-width:' + dotSize + 'px', 'min-height:' + dotSize + 'px',
-            'border-radius:50%',
-            'background:#f59e0b',
-            'box-shadow:0 0 0 3px rgba(245,158,11,.25), 0 0 10px rgba(245,158,11,.6)',
+ 'width:' + dotSize + 'px', 'height:' + dotSize + 'px',
+ 'min-width:' + dotSize + 'px', 'min-height:' + dotSize + 'px',
+ 'border-radius:50%',
+ 'background:#f59e0b',
+ 'box-shadow:0 0 0 3px rgba(245,158,11,.25), 0 0 10px rgba(245,158,11,.6)',
  'flex-shrink:0', 'vertical-align:middle', 'box-sizing:border-box'
         ].join(';');
         badge.appendChild(badgeDot);
@@ -1239,7 +1245,7 @@ function extractVideoUrl(url) {
         badge.appendChild(badgeUnread);
 
         // Mostra subito qualcosa di utile nel badge (non "WT" default)
-        try { badgeLabel.textContent = 'Init v6.3.2'; } catch (_) {}
+        try { badgeLabel.textContent = 'Init v6.3.3'; } catch (_) {}
 
         onTap(badge, () => sheetOpen ? closeSheet() : openSheet());
 
@@ -1251,9 +1257,9 @@ function extractVideoUrl(url) {
             'display:none', 'flex-direction:column', 'overflow:hidden',
             'font:14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
             'background:rgba(18, 18, 22, 0.82)',
-            'backdrop-filter:blur(8px) saturate(140%)',
-            '-webkit-backdrop-filter:blur(8px) saturate(140%)',
-            'transition:transform .22s cubic-bezier(.32,.72,0,1), opacity .2s ease'
+                   'backdrop-filter:blur(8px) saturate(140%)',
+                   '-webkit-backdrop-filter:blur(8px) saturate(140%)',
+                   'transition:transform .22s cubic-bezier(.32,.72,0,1), opacity .2s ease'
         ].join(';'));
         sheet.id = '__wt_sheet__';
 
@@ -1416,7 +1422,7 @@ function extractVideoUrl(url) {
             'padding:18px',
             'font:14px/1.5 -apple-system, sans-serif',
             'backdrop-filter:blur(22px) saturate(160%)',
-            '-webkit-backdrop-filter:blur(22px) saturate(160%)'
+                     '-webkit-backdrop-filter:blur(22px) saturate(160%)'
         ].join(';'));
 
         if (IS_MOBILE) {
@@ -1857,8 +1863,8 @@ function extractVideoUrl(url) {
     function __wt_clampSheetHeight() {
         try {
             const vh = (window.visualViewport && window.visualViewport.height)
-                ? window.visualViewport.height
-                : window.innerHeight;
+            ? window.visualViewport.height
+            : window.innerHeight;
             const maxH = Math.floor(vh / 2);
             if (sheet) {
                 sheet.style.maxHeight = maxH + 'px';
@@ -2034,7 +2040,7 @@ function extractVideoUrl(url) {
         else if (state === 'error') { badgeDot.style.animation = 'wt-badge-pop 0.4s ease'; setTimeout(function(){ try { badgeDot.style.animation=''; } catch(_){} }, 500); }
         else badgeDot.style.animation = '';
         if (badge) badge.style.animation = (state === 'connected') ? 'wt-glow 3s ease-in-out infinite' : '';
-        badgeLabel.textContent = text + ' v6.3.2';
+        badgeLabel.textContent = text + ' v6.3.3';
         const headerDot = document.getElementById('__wt_header_dot__');
         if (headerDot) {
             headerDot.style.background = c;
@@ -2095,9 +2101,9 @@ function extractVideoUrl(url) {
             for (let di = 0; di < 3; di++) {
                 const dot = document.createElement('span');
                 dot.style.cssText = 'display:inline-block;width:5px;height:5px;border-radius:50%;' +
-                    'background:' + THEME.accent + ';box-shadow:0 0 6px ' + THEME.accent + ';' +
-                    'animation:wt-typing-bounce 1.2s ease-in-out infinite;' +
-                    'animation-delay:' + (di * 0.15) + 's';
+                'background:' + THEME.accent + ';box-shadow:0 0 6px ' + THEME.accent + ';' +
+                'animation:wt-typing-bounce 1.2s ease-in-out infinite;' +
+                'animation-delay:' + (di * 0.15) + 's';
                 dots.appendChild(dot);
             }
             el.appendChild(dots);
@@ -2123,7 +2129,7 @@ function extractVideoUrl(url) {
             isOwn ? 'flex-direction:row-reverse' : 'flex-direction:row',
             'align-items:flex-end', 'width:100%',
             'animation:wt-msg-pop .35s cubic-bezier(.2,.9,.3,1.3)',
-            'margin-bottom:2px'
+                       'margin-bottom:2px'
         ].join(';'));
 
         // Avatar con iniziali + colore deterministico
@@ -2134,12 +2140,12 @@ function extractVideoUrl(url) {
             'min-width:30px', 'min-height:30px',
             'border-radius:50%',
             'background:linear-gradient(135deg, hsl(' + hue + ',70%,62%), hsl(' + ((hue+40)%360) + ',75%,55%))',
-            'color:#0a0a10',
-            'font:800 12px -apple-system,sans-serif',
-            'display:flex', 'align-items:center', 'justify-content:center',
-            'box-shadow:0 3px 8px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.28)',
-            'letter-spacing:-.3px',
-            'transition:transform .15s ease'
+                      'color:#0a0a10',
+                      'font:800 12px -apple-system,sans-serif',
+                      'display:flex', 'align-items:center', 'justify-content:center',
+                      'box-shadow:0 3px 8px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.28)',
+                      'letter-spacing:-.3px',
+                      'transition:transform .15s ease'
         ].join(';'), _initials(isOwn ? (author || 'Tu') : authorName));
         if (isOwn) av.style.opacity = '0.55';
         row.appendChild(av);
@@ -2154,8 +2160,8 @@ function extractVideoUrl(url) {
             const nm = el('div', [
                 'font-size:11.5px', 'font-weight:700',
                 'color:hsl(' + hue + ',70%,68%)',
-                'margin:0 8px 5px',
-                'letter-spacing:.2px'
+                          'margin:0 8px 5px',
+                          'letter-spacing:.2px'
             ].join(';'), authorName);
             col.appendChild(nm);
         }
@@ -2166,13 +2172,13 @@ function extractVideoUrl(url) {
             'min-width:0',
             isOwn ? 'border-bottom-right-radius:5px' : 'border-bottom-left-radius:5px',
             'background:' + (isOwn ? THEME.ownBubble : THEME.otherBubble),
-            'border:1px solid ' + (isOwn ? hexA(THEME.accent, .35) : THEME.border),
-            'color:' + THEME.text,
-            'font-size:14px', 'line-height:1.42',
-            'word-wrap:break-word', 'word-break:break-word',
-            'transition:transform .12s ease, box-shadow .15s ease',
-            'backdrop-filter:blur(6px)',
-            '-webkit-backdrop-filter:blur(6px)'
+                          'border:1px solid ' + (isOwn ? hexA(THEME.accent, .35) : THEME.border),
+                          'color:' + THEME.text,
+                          'font-size:14px', 'line-height:1.42',
+                          'word-wrap:break-word', 'word-break:break-word',
+                          'transition:transform .12s ease, box-shadow .15s ease',
+                          'backdrop-filter:blur(6px)',
+                          '-webkit-backdrop-filter:blur(6px)'
         ].join(';'), text);
         bubble.addEventListener('mouseenter', () => {
             bubble.style.transform = 'translateY(-1px)';
@@ -2287,11 +2293,11 @@ function extractVideoUrl(url) {
                     persistent: persistent,
                     create: !autoReconnect,
                     ownerToken: getOwnerToken(room),
-                    url: videoUrl,
-                    title: __wt_meta.title,
-                    description: __wt_meta.description,
-                    image: __wt_image,
-                    navigating: navigating,
+                                       url: videoUrl,
+                                       title: __wt_meta.title,
+                                       description: __wt_meta.description,
+                                       image: __wt_image,
+                                       navigating: navigating,
                 }));
             } catch (e) { log('send hello fail', e); }
         };
@@ -2341,6 +2347,7 @@ function extractVideoUrl(url) {
                 }
                 setStatus('connected', room + (isOwner ? ' 👑' : ''));
                 log('welcome, isOwner:', isOwner, 'url:', m.url);
+                try { __wt_debug('WELCOME room=' + room + ' owner=' + isOwner + ' leader=' + isLeader + ' clients=' + m.clients); } catch (_) {}
                 try {
                     ws.send(JSON.stringify({ type: 'sync-request', room, pass }));
                 } catch (_) {}
@@ -2362,7 +2369,7 @@ function extractVideoUrl(url) {
                             if (kn.pathname === ca.pathname &&
                                 kn.searchParams.get('e') === ca.searchParams.get('e')) {
                                 return;
-                            }
+                                }
                         } catch (_) {}
                         log('sync via parent:', known, '->', candidate);
                         try {
@@ -2418,26 +2425,26 @@ function extractVideoUrl(url) {
                 return;
             }
             if (m.type === 'persistent-created') {
-            // Non gestito dal client iframe (solo homepage)
-            log('persistent-created ricevuto (ignorato nel client)');
-            return;
-        }
-        if (m.type === 'room-deleted') {
-            alert('Questa stanza è stata cancellata dal proprietario.');
-            try { ws.close(); } catch (_) {}
-            room = null;
-            pass = '';
-            localStorage.removeItem(LS.room);
-            localStorage.removeItem(LS.pass);
-            setTimeout(() => openRoomPicker(), 100);
-            return;
-        }
-        if (m.type === 'room-updated') {
-            log('room aggiornata:', m.url);
-            if (m.hasPassword === false) pass = '';
-            return;
-        }
-        if (m.type === 'password-changed') {
+                // Non gestito dal client iframe (solo homepage)
+                log('persistent-created ricevuto (ignorato nel client)');
+                return;
+            }
+            if (m.type === 'room-deleted') {
+                alert('Questa stanza è stata cancellata dal proprietario.');
+                try { ws.close(); } catch (_) {}
+                room = null;
+                pass = '';
+                localStorage.removeItem(LS.room);
+                localStorage.removeItem(LS.pass);
+                setTimeout(() => openRoomPicker(), 100);
+                return;
+            }
+            if (m.type === 'room-updated') {
+                log('room aggiornata:', m.url);
+                if (m.hasPassword === false) pass = '';
+                return;
+            }
+            if (m.type === 'password-changed') {
                 alert('Password stanza ' + (m.hasPassword ? 'aggiornata' : 'rimossa') + '.');
                 return;
             }
@@ -2607,8 +2614,8 @@ function extractVideoUrl(url) {
         if (dv.getUint8(0) !== WT_BIN_HEARTBEAT) return null;
         return {
             state: dv.getUint8(1) === WT_BIN_STATE_PLAYING,
-            time: dv.getFloat32(2, true),
-            roomHash: dv.getUint32(6, true),
+ time: dv.getFloat32(2, true),
+ roomHash: dv.getUint32(6, true),
         };
     }
 
@@ -2650,212 +2657,212 @@ function extractVideoUrl(url) {
     //                  AUTOPLAY CON GESTO UTENTE
     // =================================================================
     function tryPlayVideo() {
-    if (!video) return;
-    if (!video.paused) {
-      setStatus('connected', room + (isOwner ? ' \u{1F451}' : ''));
-      return;
-    }
-    if (autoplayBlocked) {
-      setStatus('connecting', '\u25B6 Tocca per avviare');
-      showTapToStart();
-      return;
-    }
-    autoplayAttempts++;
-    if (autoplayAttempts > 3) {
-      autoplayBlocked = true;
-      setStatus('connecting', '\u25B6 Tocca per avviare');
-      showTapToStart();
-      return;
-    }
-    const wasMuted = video.muted;
-    const p = video.play();
-    if (!p || typeof p.then !== 'function') return;
-    p.then(() => {
-      autoplayAttempts = 0;
-      setStatus('connected', room + (isOwner ? ' \u{1F451}' : ''));
-    }).catch(() => {
-      video.muted = true;
-      const p2 = video.play();
-      if (!p2 || typeof p2.then !== 'function') return;
-      p2.then(() => {
-        autoplayAttempts = 0;
-        if (wasMuted) return;
-        setTimeout(() => {
-          video.muted = false;
-          const p3 = video.play();
-          if (p3 && typeof p3.then === 'function') {
-            p3.catch(() => {
-              video.muted = true;
-              setStatus('connected', '\u{1F507} Tocca per audio');
-              armUnmuteOnGesture();
-            });
-          }
-        }, 200);
-      }).catch(() => {
-        video.muted = wasMuted;
-        autoplayBlocked = true;
-        pendingPlayTarget = video.currentTime;
-        setStatus('connecting', '\u25B6 Tocca per avviare');
-        showTapToStart();
-      });
-    });
-  }
-
-  function showVideoErrorBanner(msg) {
-    if (document.getElementById('__wt_video_err__')) return;
-    const b = document.createElement('div');
-    b.id = '__wt_video_err__';
-    b.textContent = '\u26A0 ' + msg;
-    b.style.cssText = [
-      'position:fixed', 'left:50%', 'bottom:80px',
-      'transform:translateX(-50%)',
-      'z-index:2147483647',
-      'background:rgba(239,68,68,.95)',
-      'color:#fff', 'border:0',
-      'padding:12px 20px', 'border-radius:12px',
-      'font:600 13px -apple-system,sans-serif',
-      'max-width:90vw', 'text-align:center',
-      'box-shadow:0 8px 30px rgba(0,0,0,.5)',
-      'pointer-events:none',
-    ].join(';');
-    document.body.appendChild(b);
-    setTimeout(() => { try { b.remove(); } catch (_) {} }, 8000);
-  }
-
-  function showTapToStart() {
-    if (document.getElementById('__wt_tap_wrap__')) return;
-    const wrap = document.createElement('div');
-    wrap.id = '__wt_tap_wrap__';
-    wrap.style.cssText = [
-      'position:fixed', 'inset:0',
-      'z-index:2147483647',
-      'display:flex', 'align-items:center', 'justify-content:center',
-      'pointer-events:none'
-    ].join(';');
-    const btn = document.createElement('button');
-    btn.id = '__wt_tap_start__';
-    btn.textContent = '\u25B6 Tocca per sincronizzare';
-    btn.style.cssText = [
-      'background:linear-gradient(135deg,#22c55e,#16a34a)',
-      'color:#fff', 'border:0',
-      'padding:14px 24px', 'border-radius:999px',
-      'font:700 15px -apple-system,sans-serif',
-      'cursor:pointer',
-      'box-shadow:0 10px 40px rgba(34,197,94,.55), 0 0 0 4px rgba(34,197,94,.2)',
-      'animation:wt-pulse-btn 1.6s ease-in-out infinite',
-      '-webkit-tap-highlight-color:transparent',
-      'pointer-events:auto'
-    ].join(';');
-    btn.onclick = (ev) => {
-      try { ev.stopPropagation(); } catch (_) {}
-      try { wrap.remove(); } catch (_) {}
-      autoplayBlocked = false;
-      autoplayAttempts = 0;
-      try { video.muted = false; } catch (_) {}
-      const p = video.play();
-      if (p && typeof p.then === 'function') {
-        p.then(() => setStatus('connected', room + (isOwner ? ' \u{1F451}' : '')))
-         .catch(() => { try { video.muted = true; } catch(_){} video.play(); });
-      }
-    };
-    wrap.appendChild(btn);
-    document.body.appendChild(wrap);
-
-    const dismiss = () => {
-      try { wrap.remove(); } catch (_) {}
-      document.removeEventListener('pointerup', onOut, true);
-      document.removeEventListener('mousedown', onOut, true);
-      document.removeEventListener('touchstart', onOut, true);
-    };
-    const onOut = (ev) => {
-      if (btn.contains(ev.target)) return;
-      dismiss();
-    };
-    document.addEventListener('pointerup', onOut, true);
-    document.addEventListener('mousedown', onOut, true);
-    document.addEventListener('touchstart', onOut, true);
-
-    const iv = setInterval(() => {
-      if (!video || !video.paused) { dismiss(); clearInterval(iv); }
-    }, 250);
-    setTimeout(() => { dismiss(); clearInterval(iv); }, 12000);
-  }
-
-function armAutoPlayOnGesture() {
-    if (autoplayArmed) return;
-    autoplayArmed = true;
-    log('autoplay armato (pointerup), attendo gesto');
-
-    const onUp = (e) => {
-      try {
-        if (sheet && sheet.contains(e.target)) return;
-        if (optionsPanel && optionsPanel.contains(e.target)) return;
-        if (badge && badge.contains(e.target)) return;
-        if (e.target && e.target.closest && e.target.closest('button, [role="button"], a, input, select, textarea, [contenteditable]')) return;
-      } catch (_) {}
-
-      document.removeEventListener('pointerup', onUp);
-      document.removeEventListener('keydown',   onUp);
-      autoplayArmed = false;
-
-      const target = pendingPlayTarget;
-      setTimeout(() => {
-        const p = video.play();
-        if (p && typeof p.then === 'function') {
-          p.then(() => {
-            if (target !== null && Math.abs(video.currentTime - target) > 0.5) {
-              video.currentTime = target;
-            }
+        if (!video) return;
+        if (!video.paused) {
             setStatus('connected', room + (isOwner ? ' \u{1F451}' : ''));
-            log('autoplay riuscito al gesto');
-          }).catch((err) => {
-            log('autoplay ancora bloccato:', err && err.name);
-          });
+            return;
         }
-      }, 40);
-    };
-
-    document.addEventListener('pointerup', onUp, { passive: true });
-    document.addEventListener('keydown',   onUp);
-  }
-
-  let unmuteArmed = false;
-
-function armUnmuteOnGesture() {
-    if (unmuteArmed) return;
-    unmuteArmed = true;
-    log('unmute armato (pointerup), attendo primo gesto');
-
-    let done = false;
-
-    const cleanup = () => {
-      if (done) return;
-      done = true;
-      unmuteArmed = false;
-      document.removeEventListener('pointerup', onUp);
-      document.removeEventListener('keydown',   onUp);
-      log('unmute disarmato');
-    };
-
-    const onUp = (ev) => {
-      if (done) return;
-      try {
-        if (ev && ev.target && ev.target.closest && ev.target.closest('button, [role="button"], a, input, select, textarea, [contenteditable]')) return;
-      } catch (_) {}
-      cleanup();
-      // Aspetta 80ms che il player abbia processato il tap, poi togli il mute
-      setTimeout(() => {
-        if (video && !video.paused && video.muted) {
-          video.muted = false;
-          setStatus('connected', room + (isOwner ? ' \u{1F451}' : ''));
-          log('audio sbloccato al gesto');
+        if (autoplayBlocked) {
+            setStatus('connecting', '\u25B6 Tocca per avviare');
+            showTapToStart();
+            return;
         }
-      }, 80);
-    };
+        autoplayAttempts++;
+        if (autoplayAttempts > 3) {
+            autoplayBlocked = true;
+            setStatus('connecting', '\u25B6 Tocca per avviare');
+            showTapToStart();
+            return;
+        }
+        const wasMuted = video.muted;
+        const p = video.play();
+        if (!p || typeof p.then !== 'function') return;
+        p.then(() => {
+            autoplayAttempts = 0;
+            setStatus('connected', room + (isOwner ? ' \u{1F451}' : ''));
+        }).catch(() => {
+            video.muted = true;
+            const p2 = video.play();
+            if (!p2 || typeof p2.then !== 'function') return;
+            p2.then(() => {
+                autoplayAttempts = 0;
+                if (wasMuted) return;
+                setTimeout(() => {
+                    video.muted = false;
+                    const p3 = video.play();
+                    if (p3 && typeof p3.then === 'function') {
+                        p3.catch(() => {
+                            video.muted = true;
+                            setStatus('connected', '\u{1F507} Tocca per audio');
+                            armUnmuteOnGesture();
+                        });
+                    }
+                }, 200);
+            }).catch(() => {
+                video.muted = wasMuted;
+                autoplayBlocked = true;
+                pendingPlayTarget = video.currentTime;
+                setStatus('connecting', '\u25B6 Tocca per avviare');
+                showTapToStart();
+            });
+        });
+    }
 
-    document.addEventListener('pointerup', onUp, { passive: true });
-    document.addEventListener('keydown',   onUp);
-  }
+    function showVideoErrorBanner(msg) {
+        if (document.getElementById('__wt_video_err__')) return;
+        const b = document.createElement('div');
+        b.id = '__wt_video_err__';
+        b.textContent = '\u26A0 ' + msg;
+        b.style.cssText = [
+            'position:fixed', 'left:50%', 'bottom:80px',
+            'transform:translateX(-50%)',
+ 'z-index:2147483647',
+ 'background:rgba(239,68,68,.95)',
+ 'color:#fff', 'border:0',
+ 'padding:12px 20px', 'border-radius:12px',
+ 'font:600 13px -apple-system,sans-serif',
+ 'max-width:90vw', 'text-align:center',
+ 'box-shadow:0 8px 30px rgba(0,0,0,.5)',
+ 'pointer-events:none',
+        ].join(';');
+        document.body.appendChild(b);
+        setTimeout(() => { try { b.remove(); } catch (_) {} }, 8000);
+    }
+
+    function showTapToStart() {
+        if (document.getElementById('__wt_tap_wrap__')) return;
+        const wrap = document.createElement('div');
+        wrap.id = '__wt_tap_wrap__';
+        wrap.style.cssText = [
+            'position:fixed', 'inset:0',
+            'z-index:2147483647',
+            'display:flex', 'align-items:center', 'justify-content:center',
+            'pointer-events:none'
+        ].join(';');
+        const btn = document.createElement('button');
+        btn.id = '__wt_tap_start__';
+        btn.textContent = '\u25B6 Tocca per sincronizzare';
+        btn.style.cssText = [
+            'background:linear-gradient(135deg,#22c55e,#16a34a)',
+ 'color:#fff', 'border:0',
+ 'padding:14px 24px', 'border-radius:999px',
+ 'font:700 15px -apple-system,sans-serif',
+ 'cursor:pointer',
+ 'box-shadow:0 10px 40px rgba(34,197,94,.55), 0 0 0 4px rgba(34,197,94,.2)',
+ 'animation:wt-pulse-btn 1.6s ease-in-out infinite',
+ '-webkit-tap-highlight-color:transparent',
+ 'pointer-events:auto'
+        ].join(';');
+        btn.onclick = (ev) => {
+            try { ev.stopPropagation(); } catch (_) {}
+            try { wrap.remove(); } catch (_) {}
+            autoplayBlocked = false;
+            autoplayAttempts = 0;
+            try { video.muted = false; } catch (_) {}
+            const p = video.play();
+            if (p && typeof p.then === 'function') {
+                p.then(() => setStatus('connected', room + (isOwner ? ' \u{1F451}' : '')))
+                .catch(() => { try { video.muted = true; } catch(_){} video.play(); });
+            }
+        };
+        wrap.appendChild(btn);
+        document.body.appendChild(wrap);
+
+        const dismiss = () => {
+            try { wrap.remove(); } catch (_) {}
+            document.removeEventListener('pointerup', onOut, true);
+            document.removeEventListener('mousedown', onOut, true);
+            document.removeEventListener('touchstart', onOut, true);
+        };
+        const onOut = (ev) => {
+            if (btn.contains(ev.target)) return;
+            dismiss();
+        };
+        document.addEventListener('pointerup', onOut, true);
+        document.addEventListener('mousedown', onOut, true);
+        document.addEventListener('touchstart', onOut, true);
+
+        const iv = setInterval(() => {
+            if (!video || !video.paused) { dismiss(); clearInterval(iv); }
+        }, 250);
+        setTimeout(() => { dismiss(); clearInterval(iv); }, 12000);
+    }
+
+    function armAutoPlayOnGesture() {
+        if (autoplayArmed) return;
+        autoplayArmed = true;
+        log('autoplay armato (pointerup), attendo gesto');
+
+        const onUp = (e) => {
+            try {
+                if (sheet && sheet.contains(e.target)) return;
+                if (optionsPanel && optionsPanel.contains(e.target)) return;
+                if (badge && badge.contains(e.target)) return;
+                if (e.target && e.target.closest && e.target.closest('button, [role="button"], a, input, select, textarea, [contenteditable]')) return;
+            } catch (_) {}
+
+            document.removeEventListener('pointerup', onUp);
+            document.removeEventListener('keydown',   onUp);
+            autoplayArmed = false;
+
+            const target = pendingPlayTarget;
+            setTimeout(() => {
+                const p = video.play();
+                if (p && typeof p.then === 'function') {
+                    p.then(() => {
+                        if (target !== null && Math.abs(video.currentTime - target) > 0.5) {
+                            video.currentTime = target;
+                        }
+                        setStatus('connected', room + (isOwner ? ' \u{1F451}' : ''));
+                        log('autoplay riuscito al gesto');
+                    }).catch((err) => {
+                        log('autoplay ancora bloccato:', err && err.name);
+                    });
+                }
+            }, 40);
+        };
+
+        document.addEventListener('pointerup', onUp, { passive: true });
+        document.addEventListener('keydown',   onUp);
+    }
+
+    let unmuteArmed = false;
+
+    function armUnmuteOnGesture() {
+        if (unmuteArmed) return;
+        unmuteArmed = true;
+        log('unmute armato (pointerup), attendo primo gesto');
+
+        let done = false;
+
+        const cleanup = () => {
+            if (done) return;
+            done = true;
+            unmuteArmed = false;
+            document.removeEventListener('pointerup', onUp);
+            document.removeEventListener('keydown',   onUp);
+            log('unmute disarmato');
+        };
+
+        const onUp = (ev) => {
+            if (done) return;
+            try {
+                if (ev && ev.target && ev.target.closest && ev.target.closest('button, [role="button"], a, input, select, textarea, [contenteditable]')) return;
+            } catch (_) {}
+            cleanup();
+            // Aspetta 80ms che il player abbia processato il tap, poi togli il mute
+            setTimeout(() => {
+                if (video && !video.paused && video.muted) {
+                    video.muted = false;
+                    setStatus('connected', room + (isOwner ? ' \u{1F451}' : ''));
+                    log('audio sbloccato al gesto');
+                }
+            }, 80);
+        };
+
+        document.addEventListener('pointerup', onUp, { passive: true });
+        document.addEventListener('keydown',   onUp);
+    }
 
     // =================================================================
     function handleHeartbeat(m) {
@@ -2916,15 +2923,15 @@ function armUnmuteOnGesture() {
         // === Annuncio play/pause remoto (best effort) ===
         if (m.type === 'play' || m.type === 'pause') {
             const isFromMe = (m.clientId && m.clientId === clientId)
-                          || (!m.clientId && m.author && m.author === author);
+            || (!m.clientId && m.author && m.author === author);
             if (!isFromMe) {
                 const now = Date.now();
                 if (now - (window.__wt_lastAnn || 0) > 1500) {
                     window.__wt_lastAnn = now;
                     const who = m.author || 'Un utente';
                     addSystemLine(who + (m.type === 'play'
-                        ? ' ha avviato la riproduzione'
-                        : ' ha messo in pausa'));
+                    ? ' ha avviato la riproduzione'
+                    : ' ha messo in pausa'));
                 }
             }
         }
@@ -2945,7 +2952,7 @@ function armUnmuteOnGesture() {
             const who = m.author || '?';
             const txt = m.text || '';
             const isOwnMsg = (m.clientId && m.clientId === clientId)
-                          || (!m.clientId && who === author);
+            || (!m.clientId && who === author);
             addSystemLine((isOwnMsg ? 'Tu ' : (who + ' ')) + txt);
             return;
         }
