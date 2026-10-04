@@ -1353,40 +1353,7 @@ $('loginSubmit').onclick = function(){
       sessionStorage.setItem(ADMIN_USER_KEY, u);
       msg.className = 'msg ok'; msg.textContent = 'Accesso riuscito';
       toast('Benvenuto, ' + u, 'success');
-      setTimeout(function(){ closeModal('loginModal'); 
-function loadScriptVersion(){
-  fetch('/wt.user.js', { cache: 'no-store' })
-    .then(function(r){ return r.text(); })
-    .then(function(text){
-      var m = text.match(/\/\/\s*@version\s+(\S+)/);
-      var v = m ? m[1] : '?';
-      var vt = document.getElementById('verText');
-      if (vt) vt.textContent = v;
-      var seen = localStorage.getItem('wt_seen_version');
-      if (seen === null || seen !== v){
-        document.getElementById('versionBar').style.display = 'flex';
-        if (seen !== null && seen !== v){
-          var nb = document.getElementById('newBadge');
-          if (nb) nb.style.display = 'inline-block';
-        }
-      }
-    })
-    .catch(function(){
-      var vt = document.getElementById('verText');
-      if (vt) vt.textContent = 'n/d';
-      document.getElementById('versionBar').style.display = 'flex';
-    });
-}
-document.addEventListener('click', function(e){
-  var btn = e.target.closest && e.target.closest('#updateBtn');
-  if (btn){
-    var v = document.getElementById('verText').textContent;
-    if (v && v !== '?' && v !== 'n/d') localStorage.setItem('wt_seen_version', v);
-  }
-});
-loadScriptVersion();
-
-refreshAdminUI(); }, 400);
+      setTimeout(function(){ closeModal('loginModal'); refreshAdminUI(); }, 400);
     } else if (m.type === 'error'){
       msg.className = 'msg err'; msg.textContent = m.message || 'Credenziali errate';
       shakeModal('loginModal');

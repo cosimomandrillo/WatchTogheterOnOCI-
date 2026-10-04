@@ -600,8 +600,6 @@ function extractVideoUrl(url) {
         }, null);
     }
 
-    try { setTimeout(__wt_applyFullscreenLayout, 500); } catch (_) {}
-
     log('cerco <video>…');
     const waitVideo = setInterval(() => {
         const v = pickVideo();
@@ -636,6 +634,7 @@ function extractVideoUrl(url) {
         buildUI();
         attachVideoListeners();
         attachNextEpisodeInterceptor();
+        try { setTimeout(__wt_applyFullscreenLayout, 200); } catch (_) {}
 
         pageUrl = await resolvePageUrl();
         log('pageUrl:', pageUrl);
@@ -2626,9 +2625,6 @@ function armAutoPlayOnGesture() {
     document.addEventListener('keydown',   onUp);
   }
 
-  // Listener globale one-shot: al primissimo tocco, se il video è muto
-  // e in play, togli il mute. Funziona in aggiunta a armUnmuteOnGesture.
-
   let unmuteArmed = false;
 
 function armUnmuteOnGesture() {
@@ -2720,11 +2716,6 @@ function armUnmuteOnGesture() {
     }
 
     // =================================================================
-    // iOS FAKE FULLSCREEN
-    // =================================================================
-    // Su iOS il fullscreen nativo (webkitEnterFullscreen) crea un player
-    // di sistema senza possibilità di overlay DOM. Lo intercettiamo e
-    // usiamo CSS fullscreen: video a tutto schermo, ma chat/badge visibili.
     function handle(m) {
         if (!m || !m.type) return;
 
@@ -2787,14 +2778,6 @@ function armUnmuteOnGesture() {
         if (m.type === 'h') {
             handleHeartbeat(m);
             return;
-        }
-
-        // Se arriva un play/pause/seek e siamo NOI stessi gli autori (echo
-        // del server), non applichiamo nulla per evitare loop.
-        if ((m.type === 'play' || m.type === 'pause' || m.type === 'seek')) {
-            const isFromMe = (m.clientId && m.clientId === clientId)
-                          || (!m.clientId && m.author === author);
-            // Non possiamo sapere se è echo, quindi lasciamo applicare.
         }
 
         lock = true;

@@ -15,7 +15,6 @@ import os
 import re
 import secrets
 import sqlite3
-import struct
 import time
 
 import websockets
@@ -27,7 +26,7 @@ ROOM_IDLE_TTL    = int(os.getenv("WT_ROOM_TTL", "300"))
 TOMBSTONE_TTL    = int(os.getenv("WT_TOMBSTONE_TTL", "300"))
 DB_PATH          = os.getenv("WT_DB_PATH", "/opt/watch-together/rooms.db")
 MAX_CHAT_HISTORY = 50
-MAX_MESSAGE_SIZE = 1024
+MAX_MESSAGE_SIZE = 4096
 CHAT_RATE_SEC    = 1.0
 CHAT_MAX_LEN     = 500
 URL_MAX_LEN      = 500
@@ -952,15 +951,21 @@ async def handler(ws):
                 continue
 
             if t == "system":
+                now = time.time()
+                if now - last_chat_ts < CHAT_RATE_SEC:
+                    continue
+                last_chat_ts = now
                 text = sanitize_chat(msg.get("text"))
                 if not text:
                     continue
                 author_msg = (msg.get("author") or "?")[:32]
+                client_id = (msg.get("clientId") or "")[:64]
                 entry = {
                     "type": "system",
                     "author": author_msg,
+                    "clientId": client_id,
                     "text": text,
-                    "ts": time.time(),
+                    "ts": now,
                 }
                 await asyncio.gather(
                     *(p.send(json.dumps(entry)) for p in tuple(peers)),
