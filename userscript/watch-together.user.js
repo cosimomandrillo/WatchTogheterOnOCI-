@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      6.3.1
+// @version      6.3.2
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -688,6 +688,10 @@ function extractVideoUrl(url) {
                       : (function(){ try { return localStorage.getItem('wt_room') || ''; } catch(_){ return ''; } })();
                 __wt_debug('FORCE_CONNECT_TRY room=' + r + ' try=' + tries);
                 if (!r) { setTimeout(tick, delays[tries] || 12000); return; }
+                if (typeof video === 'undefined' || !video) {
+                    __wt_debug('FORCE_SKIP no-video host=' + location.hostname);
+                    return;
+                }
                 if (typeof room === 'undefined' || !room) room = r;
                 if (typeof connect === 'function') connect();
             } catch (e) {
@@ -1235,7 +1239,7 @@ function extractVideoUrl(url) {
         badge.appendChild(badgeUnread);
 
         // Mostra subito qualcosa di utile nel badge (non "WT" default)
-        try { badgeLabel.textContent = 'Init v6.2.9'; } catch (_) {}
+        try { badgeLabel.textContent = 'Init v6.3.2'; } catch (_) {}
 
         onTap(badge, () => sheetOpen ? closeSheet() : openSheet());
 
@@ -2030,7 +2034,7 @@ function extractVideoUrl(url) {
         else if (state === 'error') { badgeDot.style.animation = 'wt-badge-pop 0.4s ease'; setTimeout(function(){ try { badgeDot.style.animation=''; } catch(_){} }, 500); }
         else badgeDot.style.animation = '';
         if (badge) badge.style.animation = (state === 'connected') ? 'wt-glow 3s ease-in-out infinite' : '';
-        badgeLabel.textContent = text + ' v6.2.9';
+        badgeLabel.textContent = text + ' v6.3.2';
         const headerDot = document.getElementById('__wt_header_dot__');
         if (headerDot) {
             headerDot.style.background = c;
