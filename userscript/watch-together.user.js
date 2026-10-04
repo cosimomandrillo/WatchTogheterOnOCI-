@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      4.9.9
+// @version      4.9.10
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -666,6 +666,83 @@ function extractVideoUrl(url) {
         } catch (_) {}
     }
 
+    // Cerca link del prossimo episodio: prima nel TOP (same-origin),
+    // poi in eventuali altri documenti accessibili, infine in sé stesso.
+    function __wt_scanDocForNext(doc, topHref) {
+        if (!doc) return '';
+        let anchors;
+        try {
+            anchors = Array.from(doc.querySelectorAll(
+                'a[href*="/it/watch/"], a[href*="/watch/"], a[href*="episode_id="], a[href*="?e="]'
+            ));
+        } catch (_) { return ''; }
+        if (!anchors.length) return '';
+
+        const eps = [];
+        anchors.forEach(function (a) {
+            let h = a.getAttribute('href') || '';
+            if (!h) return;
+            const m = h.match(/[?&](?:e|episode_id)=(\d+)/);
+            if (!m) return;
+            let abs;
+            try { abs = new URL(h, topHref || location.origin).href; } catch (_) { return; }
+            eps.push({ e: parseInt(m[1], 10), url: abs, el: a });
+        });
+        if (!eps.length) return '';
+
+        const byE = {};
+        eps.forEach(function (x) { if (!byE[x.e]) byE[x.e] = x; });
+        const sorted = Object.keys(byE).map(function (k) { return byE[k]; })
+            .sort(function (a, b) { return a.e - b.e; });
+
+        const curM = (topHref || '').match(/[?&](?:e|episode_id)=(\d+)/);
+        const curE = curM ? parseInt(curM[1], 10) : null;
+
+        if (curE !== null) {
+            const nxt = sorted.find(function (x) { return x.e > curE; });
+            if (nxt) return nxt.url;
+        }
+
+        const active = eps.find(function (x) {
+            return /active|current|playing|selected|episode-item-active/i.test(
+                (x.el.className || '') + ' ' + (x.el.parentElement ? x.el.parentElement.className : '')
+            );
+        });
+        if (active) {
+            const idx = sorted.findIndex(function (x) { return x.e === active.e; });
+            if (idx >= 0 && sorted[idx + 1]) return sorted[idx + 1].url;
+        }
+
+        return sorted.length ? sorted[0].url : '';
+    }
+
+    function __wt_findNextEpisodeOnPage() {
+        let topHref = '';
+        let topDoc = null;
+        let parentDoc = null;
+        try { topHref = window.top.location.href; } catch (_) {
+            try { topHref = location.href; } catch (__) {}
+        }
+        try { topDoc = window.top.document; } catch (_) {}
+        try { parentDoc = window.parent && window.parent !== window ? window.parent.document : null; } catch (_) {}
+
+        const docs = [];
+        if (topDoc) docs.push(topDoc);
+        if (parentDoc && parentDoc !== topDoc) docs.push(parentDoc);
+        docs.push(document);
+
+        for (let i = 0; i < docs.length; i++) {
+            try {
+                const url = __wt_scanDocForNext(docs[i], topHref);
+                if (url) {
+                    log('next-episode trovato nel doc #' + i + ':', url);
+                    return url;
+                }
+            } catch (_) {}
+        }
+        return '';
+    }
+
     function attachNextEpisodeInterceptor() {
         if (window.__wt_next_ep_hooked) return;
         window.__wt_next_ep_hooked = true;
@@ -678,9 +755,6 @@ function extractVideoUrl(url) {
 
             __wt_logClick('CLICK-NEXT', e);
 
-            // Se non siamo in una stanza, lascia fare al player
-            if (!connected || !room) return;
-
             e.preventDefault();
             e.stopPropagation();
             e.stopImmediatePropagation();
@@ -692,20 +766,26 @@ function extractVideoUrl(url) {
             );
             if (!ok) return;
 
-            // Chiedi al TOP di trovare il link del prossimo episodio
-            let done = false;
-            const handler = function (ev) {
-                if (!ev.data || !ev.data.__wt_next_episode_url__) return;
-                if (done) return;
-                done = true;
-                try { window.removeEventListener('message', handler); } catch (_) {}
-                const nextUrl = ev.data.__wt_next_episode_url__;
-                log('next-episode URL dal TOP:', nextUrl);
-                if (!nextUrl) {
-                    alert('Non riesco a trovare il link del prossimo episodio. Apri la lista episodi e riprova.');
-                    return;
-                }
-                // 1) Notifica il server
+            const nextUrl = __wt_findNextEpisodeOnPage();
+            if (!nextUrl) {
+                log('next-episode: link non trovato nei documenti accessibili');
+                alert('Non riesco a trovare il link del prossimo episodio.\n\n' +
+                      'Apri la lista episodi sotto al player e riprova, oppure ' +
+                      'naviga manualmente e la stanza si aggiornerà da sola.');
+                return;
+            }
+
+            log('next-episode:', nextUrl);
+
+            // Manda update-url al server (il server broadcasta navigate)
+            let roomName = '', roomPass = '', authorName = '';
+            try {
+                roomName   = localStorage.getItem('wt_room')   || '';
+                roomPass   = localStorage.getItem('wt_pass')   || '';
+                authorName = localStorage.getItem('wt_author') || '?';
+            } catch (_) {}
+
+            if (typeof connected !== 'undefined' && connected && ws && ws.readyState === 1 && room) {
                 try {
                     ws.send(JSON.stringify({
                         type: 'update-url',
@@ -714,23 +794,53 @@ function extractVideoUrl(url) {
                         url: nextUrl,
                     }));
                 } catch (_) {}
-                // 2) Naviga il TOP
+            } else if (roomName && DEFAULTS.wsUrl && !DEFAULTS.wsUrl.includes('YOUR')) {
                 try {
-                    sessionStorage.setItem('wt_pending_navigate', '1');
-                    sessionStorage.removeItem('wt_following_navigate');
+                    const sock = new WebSocket(DEFAULTS.wsUrl);
+                    sock.onopen = function () {
+                        try {
+                            sock.send(JSON.stringify({
+                                type: 'hello',
+                                room: roomName,
+                                pass: roomPass,
+                                author: authorName,
+                                persistent: false,
+                                create: false,
+                                ownerToken: '',
+                                url: nextUrl,
+                                navigating: true,
+                            }));
+                        } catch (_) {}
+                        setTimeout(function () { try { sock.close(); } catch(_) {} }, 900);
+                    };
+                    sock.onerror = function () { try { sock.close(); } catch(_) {} };
                 } catch (_) {}
-                const joinUrl = buildJoinUrl(nextUrl, room, pass);
-                setTimeout(function () { navigateTop(joinUrl); }, 200);
+            }
+
+            // Naviga il TOP: se same-origin, accesso diretto
+            const goTop = function () {
+                try {
+                    if (window.top !== window) {
+                        window.top.location.href = nextUrl;
+                        return true;
+                    }
+                } catch (_) {}
+                return false;
             };
-            window.addEventListener('message', handler);
-            try {
-                window.top.postMessage({ __wt_find_next_episode__: true }, '*');
-            } catch (_) {}
             setTimeout(function () {
-                if (done) return;
-                done = true;
-                try { window.removeEventListener('message', handler); } catch (_) {}
-            }, 2500);
+                if (goTop()) return;
+                // fallback: anchor target=_top (cross-origin)
+                try {
+                    const a = document.createElement('a');
+                    a.href = nextUrl;
+                    a.target = '_top';
+                    a.rel = 'noopener';
+                    a.style.display = 'none';
+                    (document.body || document.documentElement).appendChild(a);
+                    a.click();
+                    setTimeout(function(){ try { a.remove(); } catch(_){} }, 200);
+                } catch (_) {}
+            }, 250);
         }, true);
     }
 
