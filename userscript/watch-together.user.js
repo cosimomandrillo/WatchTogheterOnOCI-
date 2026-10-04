@@ -1,9 +1,13 @@
 // ==UserScript==
 // @name         Watch Together
 // @namespace    watch-together
-// @match        *://*/*
+// @match        *://vixcloud.co/*
 // @match        *://*.vixcloud.co/*
-// @version      5.1.2
+// @match        *://streamingcommunity*/*
+// @match        *://*.streamingcommunity*/*
+// @match        *://*.photography/*
+// @match        *://*.pictures/*
+// @version      5.1.4
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -2137,6 +2141,10 @@ function extractVideoUrl(url) {
       setStatus('connected', room + (isOwner ? ' \u{1F451}' : ''));
       return;
     }
+    if (video.readyState < 3) {
+      log('tryPlayVideo: video non pronto (readyState=' + video.readyState + ')');
+      return;
+    }
     if (autoplayBlocked) {
       setStatus('connecting', '\u25B6 Tocca per avviare');
       showTapToStart();
@@ -2323,7 +2331,6 @@ function armUnmuteOnGesture() {
     function handleHeartbeat(m) {
         if (!video) return;
 
-        // Se il video non è ancora pronto, memorizza e ritenta su canplay
         if (video.readyState < 1) {
             window.__wt_pendingHb = m;
             return;
@@ -2333,8 +2340,11 @@ function armUnmuteOnGesture() {
         const targetPlaying = (m.s === 'r');
         const drift = targetTime !== null ? Math.abs(video.currentTime - targetTime) : 0;
 
-        // === STATO PLAY ===
         if (targetPlaying) {
+            if (video.readyState < 3) {
+                log('hb: readyState=' + video.readyState + ', skip play');
+                return;
+            }
             if (targetTime !== null && drift > THRESHOLD_TICK) {
                 lock = true;
                 try { video.currentTime = targetTime; } catch (_) {}
@@ -2344,7 +2354,6 @@ function armUnmuteOnGesture() {
             return;
         }
 
-        // === STATO PAUSA ===
         if (!video.paused) {
             lock = true;
             try {
@@ -2357,12 +2366,44 @@ function armUnmuteOnGesture() {
             return;
         }
 
-        // === STATO PAUSA già in pausa: correggi solo drift ===
-        if (targetTime !== null && drift > THRESHOLD_TICK) {
+        if (targetTime !== null && drift > THRESHOLD_TICK && video.readyState >= 2) {
             lock = true;
             try { video.currentTime = targetTime; } catch (_) {}
             setTimeout(() => { lock = false; }, 100);
         }
+    }
+
+    // === iOS-first-tap ===
+    if (IS_IOS) {
+        let __wt_ios_tapped = false;
+        const __wt_ios_tap = function () {
+            if (__wt_ios_tapped) return;
+            __wt_ios_tapped = true;
+            document.removeEventListener('touchend', __wt_ios_tap, true);
+            document.removeEventListener('click', __wt_ios_tap, true);
+            if (!video) return;
+            if (!video.paused) return;
+            if (video.readyState < 2) return;
+            try {
+                video.muted = false;
+                const p = video.play();
+                if (p && typeof p.then === 'function') {
+                    p.then(() => {
+                        autoplayBlocked = false;
+                        autoplayAttempts = 0;
+                        log('iOS first-tap play ok');
+                        setStatus('connected', room + (isOwner ? ' \u{1F451}' : ''));
+                    }).catch(() => {
+                        try {
+                            video.muted = true;
+                            video.play().catch(() => {});
+                        } catch (_) {}
+                    });
+                }
+            } catch (_) {}
+        };
+        document.addEventListener('touchend', __wt_ios_tap, { capture: true, passive: true });
+        document.addEventListener('click', __wt_ios_tap, { capture: true });
     }
 
     function handle(m) {
