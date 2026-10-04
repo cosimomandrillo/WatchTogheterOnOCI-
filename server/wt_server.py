@@ -15,6 +15,7 @@ import os
 import re
 import secrets
 import sqlite3
+import struct
 import time
 
 import websockets
@@ -242,6 +243,25 @@ async def handler(ws):
 
     try:
         async for raw in ws:
+            # === Binary heartbeat ===
+            if isinstance(raw, (bytes, bytearray)):
+                if len(raw) < 10:
+                    continue
+                if raw[0] == 0x01:
+                    # Heartbeat binario: inoltra ai peer senza decodificare
+                    if room is not None:
+                        peers_b = ROOMS.get(room, {}).get("clients", set())
+                        if len(peers_b) > 1:
+                            try:
+                                ROOMS[room]["last_hb_bin"] = bytes(raw)
+                            except Exception:
+                                pass
+                            await asyncio.gather(
+                                *(p.send(bytes(raw)) for p in tuple(peers_b) if p is not ws),
+                                return_exceptions=True,
+                            )
+                continue
+
             if len(raw) > MAX_MESSAGE_SIZE:
                 continue
             try:
@@ -514,6 +534,7 @@ async def handler(ws):
                         "persistent": persistent,
                         "leader_ws": None,
                         "last_hb": None,
+                        "last_hb_bin": None,
                     }
                     if persistent:
                         db_upsert(r, p, token, url,
@@ -626,16 +647,23 @@ async def handler(ws):
                     pass
 
                 # Invia subito lo stato attuale al nuovo client se conosciuto
-                lhb = ROOMS[r].get("last_hb")
-                if lhb and not is_leader:
+                lhb_bin = ROOMS[r].get("last_hb_bin")
+                if lhb_bin and not is_leader:
                     try:
-                        await ws.send(json.dumps({
-                            "type": "h",
-                            "v": lhb.get("v"),
-                            "s": lhb.get("s"),
-                        }))
+                        await ws.send(lhb_bin)
                     except Exception:
                         pass
+                else:
+                    lhb = ROOMS[r].get("last_hb")
+                    if lhb and not is_leader:
+                        try:
+                            await ws.send(json.dumps({
+                                "type": "h",
+                                "v": lhb.get("v"),
+                                "s": lhb.get("s"),
+                            }))
+                        except Exception:
+                            pass
 
                 if not was_in_room:
                     await broadcast(room, {
@@ -729,6 +757,7 @@ async def handler(ws):
                     "persistent": True,
                     "leader_ws": None,
                     "last_hb": None,
+                    "last_hb_bin": None,
                 }
                 db_upsert(name, password, token, url)
                 await broadcast_room_list()
@@ -956,7 +985,7 @@ def join(room: str, ws) -> None:
         "clients": set(), "authors": {}, "chat": [], "state": None,
         "password": "", "owner_token": "", "url": "",
         "created_at": time.time(), "cleanup_task": None,
-        "persistent": False, "leader_ws": None, "last_hb": None,
+        "persistent": False, "leader_ws": None, "last_hb": None, "last_hb_bin": None,
     })
     r["clients"].add(ws)
 
@@ -1044,6 +1073,7 @@ async def main():
             "persistent": True,
             "leader_ws": None,
             "last_hb": None,
+            "last_hb_bin": None,
         }
         log.info(f"caricata stanza persistente: {name!r}")
 

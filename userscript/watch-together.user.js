@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      5.2.1
+// @version      5.2.2
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -1846,6 +1846,7 @@ function extractVideoUrl(url) {
 
         try { ws = new WebSocket(wsUrl); }
         catch (e) { log('new WebSocket fail', e); setStatus('error', 'URL non valido'); return; }
+        try { ws.binaryType = 'arraybuffer'; } catch (_) {}
 
         ws.onopen = () => {
             reconnectDelay = RECONNECT_MIN;
@@ -1882,6 +1883,14 @@ function extractVideoUrl(url) {
         ws.onerror = (e) => { log('errore WS', e); };
 
         ws.onmessage = (e) => {
+            // === Binary heartbeat ===
+            if (e.data instanceof ArrayBuffer) {
+                const hb = wtDecodeHeartbeat(e.data);
+                if (hb) {
+                    handleHeartbeatBinary(hb);
+                }
+                return;
+            }
             let m; try { m = JSON.parse(e.data); } catch (_) { return; }
             if (m.type === 'error') { handleError(m); return; }
 
@@ -2133,6 +2142,42 @@ function extractVideoUrl(url) {
     // - 1s per 10s dopo un NACK da un follower
     // - x2 se la tab non è visibile (utente non sta guardando)
     // - play/pause/seek sempre immediati via evento
+    // === Binary heartbeat protocol ===
+    // Frame: [type(1)][state(1)][timestamp(4, float32)][roomHash(4, uint32)]
+    const WT_BIN_HEARTBEAT = 0x01;
+    const WT_BIN_STATE_PAUSED  = 0x00;
+    const WT_BIN_STATE_PLAYING = 0x01;
+
+    function wtRoomHash(name) {
+        let h = 0;
+        const s = String(name || '');
+        for (let i = 0; i < s.length; i++) {
+            h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+        }
+        return h >>> 0;
+    }
+
+    function wtEncodeHeartbeat(state, time, roomName) {
+        const buf = new ArrayBuffer(10);
+        const dv = new DataView(buf);
+        dv.setUint8(0, WT_BIN_HEARTBEAT);
+        dv.setUint8(1, state ? WT_BIN_STATE_PLAYING : WT_BIN_STATE_PAUSED);
+        dv.setFloat32(2, time, true);   // little-endian
+        dv.setUint32(6, wtRoomHash(roomName), true);
+        return buf;
+    }
+
+    function wtDecodeHeartbeat(buf) {
+        if (!buf || buf.byteLength < 10) return null;
+        const dv = new DataView(buf);
+        if (dv.getUint8(0) !== WT_BIN_HEARTBEAT) return null;
+        return {
+            state: dv.getUint8(1) === WT_BIN_STATE_PLAYING,
+            time: dv.getFloat32(2, true),
+            roomHash: dv.getUint32(6, true),
+        };
+    }
+
     const HEARTBEAT_IDLE_MS  = 5000;
     const HEARTBEAT_FAST_MS  = 1000;
     const HEARTBEAT_TICK_MS  = 500;
@@ -2162,11 +2207,8 @@ function extractVideoUrl(url) {
         if (now - lastHbSent < interval) return;
         lastHbSent = now;
         try {
-            ws.send(JSON.stringify({
-                type: 'h',
-                v: Math.round(video.currentTime * 100) / 100,
-                s: video.paused ? 'p' : 'r',
-            }));
+            const frame = wtEncodeHeartbeat(!video.paused, video.currentTime, room);
+            ws.send(frame);
         } catch (_) {}
     }
 
