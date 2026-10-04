@@ -870,6 +870,13 @@ async def handler(ws):
                 )
                 continue
 
+            if t == "typing":
+                await asyncio.gather(
+                    *(p.send(raw) for p in tuple(peers) if p is not ws),
+                    return_exceptions=True,
+                )
+                continue
+
             if t in ("play", "pause", "seek"):
                 ROOMS[room]["state"] = {
                     "type": t,

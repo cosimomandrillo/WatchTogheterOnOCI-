@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      5.0.0
+// @version      5.0.1
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -99,11 +99,17 @@
         if (/\/it\/iframe\/\d+/.test(location.pathname)) {
             window.addEventListener('message', function (e) {
                 if (!e.data || !e.data.__wt_ask_ep__) return;
-                // Siamo same-origin col top: leggiamo l'URL reale, niente
-                // ricostruzione ambigua da episode_id (evita ep1<->ep2 mismatch).
+                // FIX ep1->ep2: costruiamo il URL canonico dal NOSTRO path
+                // (/it/iframe/NNN?episode_id=MMM), non dal top che puo'
+                // rimanere stale per 2-3s dopo il click su next.
                 var cand = '';
-                try { cand = window.top.location.href; } catch (_) { cand = location.href; }
-                try { cand = cand.split('#')[0]; } catch (_) {}
+                var mm = location.href.match(/\/it\/iframe\/(\d+)[^?]*\?[^#]*episode_id=(\d+)/);
+                if (mm) {
+                    cand = location.origin + '/it/watch/' + mm[1] + '?e=' + mm[2];
+                } else {
+                    try { cand = window.top.location.href; } catch (_) { cand = location.href; }
+                    try { cand = cand.split('#')[0]; } catch (_) {}
+                }
                 try { e.source.postMessage({ __wt_ep_result__: cand }, '*'); } catch (_) {}
             });
         }
@@ -1010,6 +1016,17 @@ function extractVideoUrl(url) {
         sheetInput.placeholder = 'Scrivi un messaggio…';
         sheetInput.maxLength = 500;
         sheetInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); sendChat(); } });
+        let __wt_typing_last = 0;
+        sheetInput.addEventListener('input', () => {
+            const now = Date.now();
+            if (now - __wt_typing_last < 1500) return;
+            __wt_typing_last = now;
+            try {
+                if (connected && ws && ws.readyState === 1) {
+                    ws.send(JSON.stringify({ type: 'typing', room: room, pass: pass, author: author }));
+                }
+            } catch (_) {}
+        });
         inputRow.appendChild(sheetInput);
 
         const sendBtn = el('button', [
@@ -1584,6 +1601,40 @@ function extractVideoUrl(url) {
         const p = c.split(/[\s_-]+/).filter(Boolean);
         if (p.length >= 2) return (p[0][0] + p[1][0]).toUpperCase();
         return c.slice(0, 2).toUpperCase();
+    }
+
+    let _typingTimer = null;
+    function showTypingIndicator(authorName) {
+        let el = document.getElementById('__wt_typing__');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = '__wt_typing__';
+            el.style.cssText = [
+                'display:flex', 'gap:8px', 'align-items:center',
+                'padding:6px 10px', 'margin:0 0 4px',
+                'font-size:11.5px', 'color:' + THEME.textMuted,
+                'font-style:italic', 'opacity:0',
+                'transition:opacity .2s ease'
+            ].join(';');
+            const dot = document.createElement('span');
+            dot.style.cssText = 'display:inline-block;width:6px;height:6px;border-radius:50%;' +
+                'background:' + THEME.accent + ';box-shadow:0 0 8px ' + THEME.accent + ';' +
+                'animation:wt-typing-blink 1.2s ease-in-out infinite';
+            el.appendChild(dot);
+            const txt = document.createElement('span');
+            txt.id = '__wt_typing_txt__';
+            el.appendChild(txt);
+            if (sheetList) sheetList.appendChild(el);
+        }
+        const txt = document.getElementById('__wt_typing_txt__');
+        if (txt) txt.textContent = (authorName || 'Qualcuno') + ' sta scrivendo…';
+        el.style.opacity = '1';
+        if (_typingTimer) clearTimeout(_typingTimer);
+        _typingTimer = setTimeout(() => {
+            const e2 = document.getElementById('__wt_typing__');
+            if (e2) e2.style.opacity = '0';
+            setTimeout(() => { try { e2 && e2.remove(); } catch(_){} }, 300);
+        }, 2200);
     }
 
     function addChatLine(authorName, text, isOwn) {
@@ -2188,6 +2239,11 @@ function armUnmuteOnGesture() {
     function handle(m) {
         if (!m || !m.type) return;
 
+        if (m.type === 'typing') {
+            if (m.author && m.author !== author) showTypingIndicator(m.author);
+            return;
+        }
+
         if (m.type === 'chat') {
             const isOwn = (m.clientId && m.clientId === clientId)
             || (!m.clientId && m.author === author);
@@ -2250,6 +2306,10 @@ function armUnmuteOnGesture() {
     @keyframes wt-slide-in {
         from { opacity: 0; transform: translateY(6px); }
         to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes wt-typing-blink {
+        0%,100% { opacity: 1; }
+        50%     { opacity: .35; }
     }
     @keyframes wt-pulse-btn {
         0%,100% { transform:translate(-50%,-50%) scale(1); box-shadow:0 10px 40px rgba(34,197,94,.55), 0 0 0 4px rgba(34,197,94,.2); }
