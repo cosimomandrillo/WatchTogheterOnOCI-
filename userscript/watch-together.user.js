@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      5.1.1
+// @version      5.1.2
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -534,6 +534,8 @@ function extractVideoUrl(url) {
     let pendingNavigateFlag = false;
     let isLeader = false;
     let heartbeatTimer = null;
+    let autoplayBlocked = false;
+    let autoplayAttempts = 0;
 
     function pickVideo() {
         const vids = Array.from(document.querySelectorAll('video')).filter(v => v.readyState >= 1);
@@ -676,6 +678,21 @@ function extractVideoUrl(url) {
                 window.__wt_pendingHb = null;
                 try { handleHeartbeat(hb); } catch (_) {}
             }
+        });
+        video.addEventListener('error', () => {
+            if (!video.error) return;
+            const code = video.error.code || 0;
+            const msg = video.error.message || '';
+            log('video error:', code, msg);
+            let desc = 'Video non riproducibile.';
+            if (code === 4) desc = 'Formato video non supportato da questo browser.';
+            if (code === 3) desc = 'Errore di decodifica del video.';
+            if (code === 2) desc = 'Errore di rete durante il caricamento del video.';
+            if (IS_IOS && /224002|MEDIA_ERR/.test(msg + ' ' + code)) {
+                desc = 'VixCloud non supporta questo video su iOS. Prova da desktop.';
+            }
+            setStatus('error', '\u26A0 Video');
+            showVideoErrorBanner(desc);
         });
     }
 
@@ -2120,20 +2137,31 @@ function extractVideoUrl(url) {
       setStatus('connected', room + (isOwner ? ' \u{1F451}' : ''));
       return;
     }
+    if (autoplayBlocked) {
+      setStatus('connecting', '\u25B6 Tocca per avviare');
+      showTapToStart();
+      return;
+    }
+    autoplayAttempts++;
+    if (autoplayAttempts > 2) {
+      autoplayBlocked = true;
+      setStatus('connecting', '\u25B6 Tocca per avviare');
+      showTapToStart();
+      return;
+    }
     const wasMuted = video.muted;
-    // 1) Tentativo con audio
     const p = video.play();
     if (!p || typeof p.then !== 'function') return;
     p.then(() => {
+      autoplayAttempts = 0;
       setStatus('connected', room + (isOwner ? ' \u{1F451}' : ''));
     }).catch(() => {
-      // 2) Forza muted (autoplay policy)
       video.muted = true;
       const p2 = video.play();
       if (!p2 || typeof p2.then !== 'function') return;
       p2.then(() => {
+        autoplayAttempts = 0;
         if (wasMuted) return;
-        // 3) Prova unmute dopo 200ms (funziona se il browser ha gesture)
         setTimeout(() => {
           video.muted = false;
           const p3 = video.play();
@@ -2146,13 +2174,34 @@ function extractVideoUrl(url) {
           }
         }, 200);
       }).catch(() => {
-        // 4) Anche muto fallisce: pulsante "Tocca per avviare"
         video.muted = wasMuted;
+        autoplayBlocked = true;
         pendingPlayTarget = video.currentTime;
         setStatus('connecting', '\u25B6 Tocca per avviare');
         showTapToStart();
       });
     });
+  }
+
+  function showVideoErrorBanner(msg) {
+    if (document.getElementById('__wt_video_err__')) return;
+    const b = document.createElement('div');
+    b.id = '__wt_video_err__';
+    b.textContent = '\u26A0 ' + msg;
+    b.style.cssText = [
+      'position:fixed', 'left:50%', 'bottom:80px',
+      'transform:translateX(-50%)',
+      'z-index:2147483647',
+      'background:rgba(239,68,68,.95)',
+      'color:#fff', 'border:0',
+      'padding:12px 20px', 'border-radius:12px',
+      'font:600 13px -apple-system,sans-serif',
+      'max-width:90vw', 'text-align:center',
+      'box-shadow:0 8px 30px rgba(0,0,0,.5)',
+      'pointer-events:none',
+    ].join(';');
+    document.body.appendChild(b);
+    setTimeout(() => { try { b.remove(); } catch (_) {} }, 8000);
   }
 
   function showTapToStart() {
@@ -2175,6 +2224,8 @@ function extractVideoUrl(url) {
     ].join(';');
     btn.onclick = () => {
       try { btn.remove(); } catch (_) {}
+      autoplayBlocked = false;
+      autoplayAttempts = 0;
       try { video.muted = false; } catch (_) {}
       const p = video.play();
       if (p && typeof p.then === 'function') {
@@ -2361,6 +2412,8 @@ function armUnmuteOnGesture() {
         try {
             if (m.type === 'play') {
                 if (Math.abs(video.currentTime - m.t) > THRESHOLD_PLAY) video.currentTime = m.t;
+                autoplayBlocked = false;
+                autoplayAttempts = 0;
                 tryPlayVideo();
             } else if (m.type === 'pause') {
                 video.pause();
