@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      6.3.3
+// @version      6.3.4
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -190,6 +190,108 @@
             return '';
         }
     }
+
+    // ===== WT TOP UI v6.3.4: badge stanza + chat nel frame principale =====
+    (function __wt_top_ui__() {
+        if (!IS_TOP || /vixcloud/i.test(location.hostname || '')) return;
+        var COL = { connected: '#22c55e', connecting: '#f59e0b', error: '#ef4444', disconnected: '#6b7280' };
+        var st = { state: 'connecting', text: 'WT: attendo il player…' };
+        var badge, dot, label, unreadEl, sheet, titleEl, list, input;
+        var playerWin = null, lastSeen = 0, unread = 0, isOpen = false, roomName = '';
+        function mk(tag, css, txt) { var e = document.createElement(tag); if (css) e.style.cssText = css; if (txt) e.textContent = txt; return e; }
+        function parentEl() {
+            var fs = document.fullscreenElement || document.webkitFullscreenElement;
+            return (fs && fs.tagName !== 'IFRAME' && fs.tagName !== 'VIDEO') ? fs : document.body;
+        }
+        function paint() {
+            if (!badge) return;
+            dot.style.background = COL[st.state] || COL.connecting;
+            label.textContent = st.text;
+            if (titleEl) titleEl.textContent = 'Chat' + (roomName ? ' · ' + roomName : '');
+        }
+        function addMsg(who, text, own, sys) {
+            if (!list) return;
+            var row = mk('div', 'display:flex;width:100%;margin:3px 0;justify-content:' + (sys ? 'center' : (own ? 'flex-end' : 'flex-start')));
+            var b = mk('div', sys
+                ? 'font-size:12px;color:#9a9aa3;padding:2px 8px'
+                : 'max-width:80%;padding:6px 10px;border-radius:12px;word-break:break-word;background:' + (own ? 'rgba(34,197,94,.28)' : 'rgba(255,255,255,.10)'));
+            if (!sys) { b.appendChild(mk('div', 'font-size:11px;font-weight:700;color:#9a9aa3;margin-bottom:2px', own ? 'Tu' : who)); }
+            b.appendChild(mk('div', '', text));
+            row.appendChild(b);
+            list.appendChild(row);
+            while (list.childNodes.length > 200) list.removeChild(list.firstChild);
+            list.scrollTop = list.scrollHeight;
+            if (!sys && !own && !isOpen) { unread++; unreadEl.textContent = unread > 99 ? '99+' : String(unread); unreadEl.style.display = 'inline-block'; }
+        }
+        function toggle() {
+            isOpen = !isOpen;
+            sheet.style.display = isOpen ? 'flex' : 'none';
+            if (isOpen) {
+                unread = 0; unreadEl.style.display = 'none';
+                list.scrollTop = list.scrollHeight;
+                setTimeout(function () { try { input.focus(); } catch (_) {} }, 50);
+            }
+        }
+        function sendMsg() {
+            var t = (input.value || '').trim();
+            if (!t) return;
+            if (!playerWin) { addMsg('', 'Player non ancora pronto, riprova tra poco', false, true); return; }
+            try { playerWin.postMessage({ __wt_cmd__: 'send', text: t }, '*'); } catch (_) {}
+            input.value = '';
+        }
+        function build() {
+            if (badge || !document.body) return;
+            badge = mk('div', 'position:fixed;top:14px;right:14px;z-index:2147483647;display:flex;align-items:center;gap:9px;height:40px;padding:0 14px 0 12px;box-sizing:border-box;border-radius:20px;background:rgba(20,20,25,.98);color:#fff;border:1.5px solid rgba(255,255,255,.28);font:600 14px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;cursor:pointer;user-select:none;box-shadow:0 4px 24px rgba(0,0,0,.85);max-width:calc(100vw - 28px);overflow:hidden');
+            badge.id = '__wt_top_badge__';
+            badge.title = 'Watch Together v6.3.4';
+            dot = mk('span', 'display:inline-block;width:12px;height:12px;min-width:12px;border-radius:50%;background:#f59e0b');
+            label = mk('span', 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:50vw', st.text);
+            unreadEl = mk('span', 'display:none;min-width:20px;height:20px;background:#ef4444;color:#fff;border-radius:10px;font:700 11px/20px sans-serif;text-align:center;padding:0 6px');
+            badge.appendChild(dot); badge.appendChild(label); badge.appendChild(unreadEl);
+            badge.addEventListener('click', toggle);
+
+            sheet = mk('div', 'position:fixed;top:64px;right:14px;z-index:2147483646;width:min(380px,calc(100vw - 28px));height:min(50vh,420px);display:none;flex-direction:column;overflow:hidden;border-radius:14px;background:rgba(18,18,22,.94);border:1px solid rgba(255,255,255,.14);color:#fff;font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;box-shadow:0 12px 40px rgba(0,0,0,.6)');
+            sheet.id = '__wt_top_sheet__';
+            titleEl = mk('div', 'padding:10px 14px;font-weight:600;border-bottom:1px solid rgba(255,255,255,.14);flex-shrink:0', 'Chat');
+            list = mk('div', 'flex:1;overflow-y:auto;padding:8px 10px');
+            var row = mk('div', 'display:flex;gap:6px;padding:8px;border-top:1px solid rgba(255,255,255,.14);flex-shrink:0');
+            input = mk('input', 'flex:1;min-width:0;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#fff;font:14px sans-serif;outline:none');
+            input.type = 'text'; input.placeholder = 'Scrivi un messaggio…'; input.maxLength = 500;
+            var btn = mk('button', 'padding:8px 12px;border:0;border-radius:8px;background:#22c55e;color:#04210f;font:700 14px sans-serif;cursor:pointer', 'Invia');
+            btn.addEventListener('click', sendMsg);
+            // window + capture: scatta PRIMA del key guard di document (che altrimenti inghiotte Invio)
+            ['keydown', 'keyup', 'keypress'].forEach(function (ev) {
+                window.addEventListener(ev, function (e) {
+                    if (e.target !== input) return;
+                    e.stopPropagation();
+                    if (ev === 'keydown' && e.key === 'Enter') { e.preventDefault(); sendMsg(); }
+                }, true);
+            });
+            row.appendChild(input); row.appendChild(btn);
+            sheet.appendChild(titleEl); sheet.appendChild(list); sheet.appendChild(row);
+            parentEl().appendChild(badge); parentEl().appendChild(sheet);
+            paint();
+        }
+        window.addEventListener('message', function (e) {
+            var d = e.data;
+            if (!d || !d.__wt_ui__) return;
+            playerWin = e.source; lastSeen = Date.now();
+            if (d.k === 'state') { st = { state: d.state, text: d.text || 'WT' }; if (d.room) roomName = d.room; paint(); }
+            else if (d.k === 'chat') addMsg(d.author || '?', d.text || '', !!d.own, false);
+            else if (d.k === 'sys') addMsg('', d.text || '', false, true);
+        });
+        function keepAlive() {
+            if (!document.body) return;
+            if (!badge) { build(); return; }
+            var pe = parentEl();
+            if (badge.parentNode !== pe) { try { pe.appendChild(badge); pe.appendChild(sheet); } catch (_) {} }
+            if (lastSeen && Date.now() - lastSeen > 8000) { st = { state: 'disconnected', text: 'Player non risponde' }; paint(); }
+            else if (!lastSeen && label && Date.now() - T0 > 10000) { st = { state: 'connecting', text: 'Player non rilevato' }; paint(); }
+        }
+        var T0 = Date.now();
+        setInterval(keepAlive, 1000);
+        keepAlive();
+    })();
 
     // Bail-out homepage statica
     if (IS_TOP && location.pathname === '/watch'
@@ -626,6 +728,23 @@
     let navigatingAway = false;
     let autoplayBlocked = false;
     let autoplayAttempts = 0;
+
+    // ===== WT BRIDGE v6.3.4: il player (iframe) parla col badge del top =====
+    function __wt_postTop(o) {
+        if (IS_TOP) return;
+        try { o.__wt_ui__ = true; window.top.postMessage(o, '*'); } catch (_) {}
+    }
+    window.addEventListener('message', function (e) {
+        var d = e.data;
+        if (!d || d.__wt_cmd__ !== 'send') return;
+        var txt = String(d.text || '').trim().slice(0, 500);
+        if (txt && connected) send({ type: 'chat', author: author, text: txt, clientId: clientId });
+    });
+    setInterval(function () {
+        if (IS_TOP || !video) return;
+        var s0 = window.__wt_state__ || {};
+        __wt_postTop({ k: 'state', state: s0.state || 'connecting', text: s0.text || '…', room: room || '' });
+    }, 1500);
 
     function pickVideo() {
         const vids = Array.from(document.querySelectorAll('video')).filter(v => v.readyState >= 1);
@@ -1245,7 +1364,7 @@
         badge.appendChild(badgeUnread);
 
         // Mostra subito qualcosa di utile nel badge (non "WT" default)
-        try { badgeLabel.textContent = 'Init v6.3.3'; } catch (_) {}
+        try { badgeLabel.textContent = 'Init v6.3.4'; } catch (_) {}
 
         onTap(badge, () => sheetOpen ? closeSheet() : openSheet());
 
@@ -2023,6 +2142,7 @@
     // =================================================================
     function setStatus(state, text) {
         try { window.__wt_state__ = { state: state, text: text, ts: Date.now() }; } catch (_) {}
+        try { if (video) __wt_postTop({ k: 'state', state: state, text: text, room: room || '' }); } catch (_) {}
         if (!badgeDot) { try { console.log('[WT] setStatus(no badgeDot):', state, text); } catch (_) {} return; }
         const colors = { connected: THEME.ok, connecting: THEME.warn, error: THEME.danger, disconnected: '#6b7280' };
         const glows = {
@@ -2040,7 +2160,7 @@
         else if (state === 'error') { badgeDot.style.animation = 'wt-badge-pop 0.4s ease'; setTimeout(function(){ try { badgeDot.style.animation=''; } catch(_){} }, 500); }
         else badgeDot.style.animation = '';
         if (badge) badge.style.animation = (state === 'connected') ? 'wt-glow 3s ease-in-out infinite' : '';
-        badgeLabel.textContent = text + ' v6.3.3';
+        badgeLabel.textContent = text + ' v6.3.4';
         const headerDot = document.getElementById('__wt_header_dot__');
         if (headerDot) {
             headerDot.style.background = c;
@@ -2124,6 +2244,7 @@
     }
 
     function addChatLine(authorName, text, isOwn) {
+        try { __wt_postTop({ k: 'chat', author: authorName, text: text, own: !!isOwn }); } catch (_) {}
         const row = el('div', [
             'display:flex', 'gap:9px',
             isOwn ? 'flex-direction:row-reverse' : 'flex-direction:row',
@@ -2204,6 +2325,7 @@
     }
 
     function addSystemLine(text) {
+        try { __wt_postTop({ k: 'sys', text: text }); } catch (_) {}
         const row = el('div', [
             'display:flex', 'justify-content:center', 'width:100%',
             'margin:2px 0', 'animation:wt-slide-in .2s ease'
