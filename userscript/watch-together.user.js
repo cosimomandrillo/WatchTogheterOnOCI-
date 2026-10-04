@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      6.0.1
+// @version      6.0.2
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -306,8 +306,18 @@
     }
 
     const IS_IOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
-    const IS_MOBILE = IS_IOS || /Android/i.test(navigator.userAgent)
-    || window.matchMedia('(max-width: 500px)').matches;
+    const IS_ANDROID = /Android/i.test(navigator.userAgent);
+    const IS_TOUCH_PRIMARY = (function () {
+        try { return window.matchMedia('(pointer: coarse)').matches; } catch (_) { return false; }
+    })();
+    const IS_NARROW = (function () {
+        try { return window.matchMedia('(max-width: 700px)').matches; } catch (_) { return false; }
+    })();
+    // Consideriamo "mobile" tutto ciò che è un telefono/tablet touch OPPURE
+    // un viewport stretto. Questo evita che un telefono moderno con viewport
+    // > 500px finisca in layout desktop (width:420px) mostrando la chat
+    // schiacciata in un angolo.
+    const IS_MOBILE = IS_IOS || IS_ANDROID || IS_TOUCH_PRIMARY || IS_NARROW;
 
     const CLIENT_ID_KEY = 'wt_client_id';
     let clientId = sessionStorage.getItem(CLIENT_ID_KEY);
@@ -1023,11 +1033,11 @@ function extractVideoUrl(url) {
         ].join(';'));
 
         if (IS_MOBILE) {
-            sheet.style.cssText += ';left:0;right:0;bottom:0;height:45dvh;max-height:45dvh;' +
+            sheet.style.cssText += ';left:0;right:0;bottom:0;height:60dvh;max-height:60dvh;' +
             'border-radius:18px 18px 0 0;border-bottom:0;transform:translateY(100%);' +
             'box-shadow:0 -8px 40px rgba(0,0,0,.7)';
         } else {
-            sheet.style.cssText += ';top:64px;right:14px;width:420px;max-height:600px;' +
+            sheet.style.cssText += ';top:64px;right:14px;width:440px;max-height:640px;' +
             'border-radius:14px;transform:translateY(-8px) scale(.98);' +
             'box-shadow:0 12px 40px rgba(0,0,0,.6)';
         }
@@ -1080,8 +1090,8 @@ function extractVideoUrl(url) {
         sheet.appendChild(header);
 
         sheetList = el('div', [
-            'flex:1', 'overflow-y:auto', 'padding:14px',
-            'display:flex', 'flex-direction:column', 'gap:8px',
+            'flex:1', 'overflow-y:auto', 'padding:16px 14px',
+            'display:flex', 'flex-direction:column', 'gap:12px',
             'scroll-behavior:smooth',
             '-webkit-overflow-scrolling:touch'
         ].join(';'));
@@ -1844,27 +1854,28 @@ function extractVideoUrl(url) {
         const col = el('div', [
             'display:flex', 'flex-direction:column',
             isOwn ? 'align-items:flex-end' : 'align-items:flex-start',
-            'max-width:80%', 'min-width:0'
+            'max-width:85%', 'min-width:0', 'flex:0 1 auto'
         ].join(';'));
 
         if (!isOwn) {
             const nm = el('div', [
-                'font-size:11px', 'font-weight:700',
+                'font-size:11.5px', 'font-weight:700',
                 'color:hsl(' + hue + ',70%,68%)',
-                'margin:0 6px 3px',
+                'margin:0 8px 5px',
                 'letter-spacing:.2px'
             ].join(';'), authorName);
             col.appendChild(nm);
         }
 
         const bubble = el('div', [
-            'padding:9px 13px',
+            'padding:10px 15px',
             'border-radius:16px',
+            'min-width:52px',
             isOwn ? 'border-bottom-right-radius:5px' : 'border-bottom-left-radius:5px',
             'background:' + (isOwn ? THEME.ownBubble : THEME.otherBubble),
             'border:1px solid ' + (isOwn ? hexA(THEME.accent, .35) : THEME.border),
             'color:' + THEME.text,
-            'font-size:14px', 'line-height:1.45',
+            'font-size:14.5px', 'line-height:1.5',
             'word-wrap:break-word', 'word-break:break-word',
             'transition:transform .12s ease, box-shadow .15s ease',
             'backdrop-filter:blur(6px)',
@@ -1881,8 +1892,8 @@ function extractVideoUrl(url) {
         col.appendChild(bubble);
 
         const ts = el('div', [
-            'font-size:9.5px', 'color:' + THEME.textMuted,
-            'margin:2px 6px 4px', 'opacity:.75'
+            'font-size:10px', 'color:' + THEME.textMuted,
+            'margin:4px 8px 0', 'opacity:.7'
         ].join(';'), new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
         col.appendChild(ts);
 
@@ -1900,10 +1911,10 @@ function extractVideoUrl(url) {
         ].join(';'));
 
         const pill = el('div', [
-            'font-size:11px', 'color:' + THEME.textMuted,
+            'font-size:11.5px', 'color:' + THEME.textMuted,
             'background:rgba(255,255,255,.04)',
                         'border:1px solid ' + THEME.border,
-                        'padding:4px 12px', 'border-radius:12px',
+                        'padding:5px 14px', 'border-radius:12px',
                         'font-style:italic',
                         'max-width:85%', 'text-align:center',
                         'white-space:nowrap', 'overflow:hidden', 'text-overflow:ellipsis'
@@ -2672,7 +2683,7 @@ function armUnmuteOnGesture() {
         50%     { transform:translate(-50%,-50%) scale(1.05); box-shadow:0 14px 50px rgba(34,197,94,.75), 0 0 0 10px rgba(34,197,94,.08); }
     }
     @keyframes wt-badge-pop { 0% { transform: scale(1); } 40% { transform: scale(1.18); } 100% { transform: scale(1); } }
-    @keyframes wt-msg-pop { 0% { opacity: 0; transform: translateY(10px) scale(.94); } 60% { opacity: 1; transform: translateY(-1px) scale(1.01); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
+    @keyframes wt-msg-pop { 0% { opacity: 0; transform: translateY(8px); } 100% { opacity: 1; transform: translateY(0); } }
     @keyframes wt-status-pulse { 0%,100% { box-shadow: 0 0 0 3px rgba(34,197,94,.28), 0 0 10px rgba(34,197,94,.6); } 50% { box-shadow: 0 0 0 6px rgba(34,197,94,.15), 0 0 20px rgba(34,197,94,.9); } }
     @keyframes wt-status-pulse-warn { 0%,100% { box-shadow: 0 0 0 3px rgba(245,158,11,.28), 0 0 10px rgba(245,158,11,.6); } 50% { box-shadow: 0 0 0 6px rgba(245,158,11,.15), 0 0 20px rgba(245,158,11,.9); } }
     @keyframes wt-typing-bounce { 0%,60%,100% { transform: translateY(0); opacity: .35; } 30% { transform: translateY(-4px); opacity: 1; } }
