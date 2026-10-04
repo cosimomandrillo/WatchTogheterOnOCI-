@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      6.2.2
+// @version      6.2.3
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -45,6 +45,22 @@
         wsUrl:  'wss://YOUR_SERVER_HERE/wt',
         author: 'Anon',
     };
+
+    // Fallback: se nginx sub_filter non ha sostituito il placeholder, prova
+    // a ricostruire l'URL dal dominio corrente (funziona solo nel top frame
+    // di un dominio "server WT" - non dentro vixcloud/SC).
+    if (DEFAULTS.wsUrl.indexOf('YOUR' + '_SERVER_HERE') !== -1) {
+        try {
+            var h = location.hostname || '';
+            var isWT = h && !/vixcloud|streamingcommunity/i.test(h);
+            if (isWT) {
+                DEFAULTS.wsUrl = 'wss://' + h + '/wt';
+                console.warn('[WT] sub_filter inattivo, fallback URL:', DEFAULTS.wsUrl);
+            } else {
+                console.warn('[WT] sub_filter inattivo, dominio non deducibile da iframe:', h);
+            }
+        } catch (_) {}
+    }
 
     // =================================================================
     // TOP FRAME LISTENER
@@ -600,6 +616,14 @@ function extractVideoUrl(url) {
         }, null);
     }
 
+    setTimeout(function () {
+        if (!document.getElementById('__wt_badge__')) {
+            var msg = 'NO BADGE after 3s (host=' + location.hostname + ')';
+            try { console.warn('[WT]', msg); } catch (_) {}
+            try { __wt_sendDebugAdHoc(msg); } catch (_) {}
+        }
+    }, 3000);
+
     log('cerco <video>…');
     const waitVideo = setInterval(() => {
         const v = pickVideo();
@@ -631,7 +655,19 @@ function extractVideoUrl(url) {
 
     async function boot() {
         loadConfig();
-        buildUI();
+        try { buildUI(); } catch (e) {
+            log('buildUI error:', e);
+            try { __wt_sendDebugAdHoc('BUILDUI ERR: ' + (e && e.message || e)); } catch (_) {}
+        }
+        if (!document.getElementById('__wt_badge__')) {
+            // Retry una volta dopo 500ms, in caso di DOM non pronto
+            setTimeout(function () {
+                try { buildUI(); } catch (e2) {
+                    log('buildUI retry error:', e2);
+                    try { __wt_sendDebugAdHoc('BUILDUI RETRY ERR: ' + (e2 && e2.message || e2)); } catch (_) {}
+                }
+            }, 500);
+        }
         attachVideoListeners();
         attachNextEpisodeInterceptor();
         try { setTimeout(__wt_applyFullscreenLayout, 200); } catch (_) {}
