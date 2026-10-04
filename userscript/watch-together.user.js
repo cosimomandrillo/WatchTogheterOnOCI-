@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      4.9.8
+// @version      4.9.9
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -82,9 +82,67 @@
                     window.location.href = e.data.url;
                 } catch (_) {}
             }
+            if (e.data && e.data.__wt_find_next_episode__) {
+                let nextUrl = '';
+                try { nextUrl = __wt_findNextEpisodeInDom(); } catch (err) {
+                    console.log('[WT][top] findNext errore:', err);
+                }
+                console.log('[WT][top] findNext =', nextUrl);
+                try {
+                    e.source.postMessage({ __wt_next_episode_url__: nextUrl }, '*');
+                } catch (_) {}
+            }
         });
     } else {
         console.log('[WT][iframe] caricato su', location.href);
+    }
+
+    function __wt_findNextEpisodeInDom() {
+        try {
+            const doc = document;
+            const curHref = location.href;
+            const curM = curHref.match(/[?&]e=(\d+)/);
+            const curE = curM ? parseInt(curM[1], 10) : null;
+
+            // Tutti i link "episodio" con ?e=NNN nella pagina
+            const anchors = Array.from(doc.querySelectorAll('a[href*="/it/watch/"]'));
+            const eps = [];
+            anchors.forEach(function (a) {
+                const h = a.getAttribute('href') || '';
+                const m = h.match(/[?&]e=(\d+)/);
+                if (!m) return;
+                const e = parseInt(m[1], 10);
+                let abs;
+                try { abs = new URL(h, location.origin).href; } catch (_) { abs = ''; }
+                if (abs) eps.push({ e: e, url: abs, el: a });
+            });
+            if (!eps.length) return '';
+
+            // Deduplica per e
+            const byE = {};
+            eps.forEach(function (x) { if (!byE[x.e]) byE[x.e] = x; });
+            const sorted = Object.values(byE).sort(function (a, b) { return a.e - b.e; });
+
+            // Caso 1: URL corrente ha ?e=NNN → primo episodio con e > curE
+            if (curE !== null) {
+                const nxt = sorted.find(function (x) { return x.e > curE; });
+                return nxt ? nxt.url : '';
+            }
+
+            // Caso 2: niente ?e= nell'URL → link marcato "active/current/playing"
+            const active = eps.find(function (x) {
+                return /active|current|playing|selected/i.test(x.el.className || '');
+            });
+            if (active) {
+                const idx = sorted.findIndex(function (x) { return x.e === active.e; });
+                if (idx >= 0 && sorted[idx + 1]) return sorted[idx + 1].url;
+            }
+
+            // Caso 3: primo link nella lista se nessuno è marcato
+            return sorted.length ? sorted[0].url : '';
+        } catch (_) {
+            return '';
+        }
     }
 
     // Bail-out homepage statica
@@ -620,21 +678,8 @@ function extractVideoUrl(url) {
 
             __wt_logClick('CLICK-NEXT', e);
 
-            // URL del TOP (SC /it/watch/61): same-origin con /it/iframe/61
-            let topUrl = '';
-            try { topUrl = window.top.location.href; } catch (_) {
-                try { topUrl = window.parent.location.href; } catch (__) {}
-            }
-            if (!topUrl) {
-                log('next-episode: topUrl non leggibile, delego al player');
-                return;
-            }
-
-            const nextTop = nextEpisodeUrl(topUrl);
-            if (!nextTop || nextTop === topUrl) {
-                log('next-episode: URL successivo non calcolabile su', topUrl);
-                return;
-            }
+            // Se non siamo in una stanza, lascia fare al player
+            if (!connected || !room) return;
 
             e.preventDefault();
             e.stopPropagation();
@@ -647,49 +692,45 @@ function extractVideoUrl(url) {
             );
             if (!ok) return;
 
-            log('next-episode:', topUrl, '->', nextTop);
-
-            let roomName = '', roomPass = '', authorName = '';
+            // Chiedi al TOP di trovare il link del prossimo episodio
+            let done = false;
+            const handler = function (ev) {
+                if (!ev.data || !ev.data.__wt_next_episode_url__) return;
+                if (done) return;
+                done = true;
+                try { window.removeEventListener('message', handler); } catch (_) {}
+                const nextUrl = ev.data.__wt_next_episode_url__;
+                log('next-episode URL dal TOP:', nextUrl);
+                if (!nextUrl) {
+                    alert('Non riesco a trovare il link del prossimo episodio. Apri la lista episodi e riprova.');
+                    return;
+                }
+                // 1) Notifica il server
+                try {
+                    ws.send(JSON.stringify({
+                        type: 'update-url',
+                        room: room,
+                        pass: pass,
+                        url: nextUrl,
+                    }));
+                } catch (_) {}
+                // 2) Naviga il TOP
+                try {
+                    sessionStorage.setItem('wt_pending_navigate', '1');
+                    sessionStorage.removeItem('wt_following_navigate');
+                } catch (_) {}
+                const joinUrl = buildJoinUrl(nextUrl, room, pass);
+                setTimeout(function () { navigateTop(joinUrl); }, 200);
+            };
+            window.addEventListener('message', handler);
             try {
-                roomName   = localStorage.getItem('wt_room')   || '';
-                roomPass   = localStorage.getItem('wt_pass')   || '';
-                authorName = localStorage.getItem('wt_author') || '?';
+                window.top.postMessage({ __wt_find_next_episode__: true }, '*');
             } catch (_) {}
-
-            // WS ad-hoc: hello + navigating=true (il server broadcasta navigate)
-            if (roomName && DEFAULTS.wsUrl && !DEFAULTS.wsUrl.includes('YOUR')) {
-                try {
-                    const sock = new WebSocket(DEFAULTS.wsUrl);
-                    sock.onopen = function () {
-                        try {
-                            sock.send(JSON.stringify({
-                                type: 'hello',
-                                room: roomName,
-                                pass: roomPass,
-                                author: authorName,
-                                persistent: false,
-                                create: false,
-                                ownerToken: '',
-                                url: nextTop,
-                                navigating: true,
-                            }));
-                        } catch (_) {}
-                        setTimeout(function () { try { sock.close(); } catch(_) {} }, 900);
-                    };
-                    sock.onerror = function () { try { sock.close(); } catch(_) {} };
-                } catch (_) {}
-            }
-
-            // Naviga il TOP (same-origin /it/iframe/61 -> /it/watch/61: diretto)
             setTimeout(function () {
-                try {
-                    if (window.top !== window) {
-                        window.top.location.href = nextTop;
-                        return;
-                    }
-                } catch (_) {}
-                navigateTop(nextTop);
-            }, 200);
+                if (done) return;
+                done = true;
+                try { window.removeEventListener('message', handler); } catch (_) {}
+            }, 2500);
         }, true);
     }
 
