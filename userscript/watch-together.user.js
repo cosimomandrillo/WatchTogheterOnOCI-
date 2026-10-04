@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      5.4.0
+// @version      5.4.1
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -2487,87 +2487,108 @@ function armUnmuteOnGesture() {
     // usiamo CSS fullscreen: video a tutto schermo, ma chat/badge visibili.
     function setupIosFakeFullscreen() {
         if (!IS_IOS) return;
-        if (window.__wt_ios_fake_fs) return;
-        window.__wt_ios_fake_fs = true;
+        if (window.__wt_ios_fs_init) return;
+        window.__wt_ios_fs_init = true;
 
+        // Rileva PWA (Add to Home Screen). Solo in PWA il fake fullscreen
+        // CSS ha senso perche' non c'e' la Safari UI a rubare spazio.
+        const isPWA = (window.navigator.standalone === true)
+                   || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+                   || (window.matchMedia && window.matchMedia('(display-mode: fullscreen)').matches);
+
+        log('iOS fullscreen init, PWA=' + isPWA);
+
+        if (!isPWA) {
+            // Browser mode: NON intercettare il pulsante. Lasciamo che iOS
+            // usi il suo fullscreen nativo, che e' meglio di un fake rotto.
+            // Mostra un hint una-tantum per installare come PWA.
+            try {
+                if (!localStorage.getItem('wt_ios_pwa_hint')) {
+                    localStorage.setItem('wt_ios_pwa_hint', '1');
+                    setTimeout(function () {
+                        const t = document.createElement('div');
+                        t.textContent = '\uD83D\uDCA1 Aggiungi alla Home per la chat a schermo intero';
+                        t.style.cssText = [
+                            'position:fixed', 'left:50%', 'bottom:90px',
+                            'transform:translateX(-50%)',
+                            'background:linear-gradient(135deg,#22c55e,#16a34a)',
+                            'color:#fff', 'padding:12px 20px', 'border-radius:999px',
+                            'font:600 13px -apple-system,sans-serif',
+                            'z-index:2147483647',
+                            'box-shadow:0 10px 30px rgba(0,0,0,.5)',
+                            'max-width:90vw', 'text-align:center',
+                            'animation:wt-slide-in .3s ease'
+                        ].join(';');
+                        document.body.appendChild(t);
+                        setTimeout(function () { try { t.remove(); } catch(_){} }, 7000);
+                    }, 3500);
+                }
+            } catch (_) {}
+            return;
+        }
+
+        // === PWA mode: fake fullscreen CSS ===
         let fakeFsActive = false;
-        let savedContainerStyle = null;
-        let fakeContainer = null;
+        let savedStyle = null;
+        let container = null;
 
         function findContainer() {
             try {
-                let el = video && video.closest && video.closest('.jwplayer, [class*="jwplayer"], [class*="jw-media"], [class*="video-js"]');
-                if (!el && video) el = video.parentElement;
-                if (!el) el = document.body;
-                return el;
+                if (video && video.closest) {
+                    const el = video.closest('.jwplayer, [class*="jwplayer"], [class*="jw-media"]');
+                    if (el) return el;
+                }
+                if (video && video.parentElement) return video.parentElement;
+                return document.body;
             } catch (_) { return document.body; }
         }
 
-        function enterFakeFs() {
+        function enterFs() {
             if (fakeFsActive) return;
-            fakeContainer = findContainer();
-            if (!fakeContainer) return;
-            savedContainerStyle = fakeContainer.getAttribute('style') || '';
-            fakeContainer.style.cssText += ';' + [
+            container = findContainer();
+            if (!container) return;
+            savedStyle = container.getAttribute('style') || '';
+            container.style.cssText += ';' + [
                 'position:fixed !important',
                 'top:0 !important', 'left:0 !important',
                 'width:100vw !important', 'height:100vh !important',
-                'z-index:2147483645 !important',
+                'z-index:2147483000 !important',
                 'background:#000 !important'
             ].join(';') + ';';
             try { document.documentElement.style.overflow = 'hidden'; } catch (_) {}
             try { document.body.style.overflow = 'hidden'; } catch (_) {}
             fakeFsActive = true;
-            log('iOS fake fullscreen ON');
-            // Riporta il badge in primo piano
-            try { if (badge) badge.style.zIndex = '2147483647'; } catch (_) {}
+            log('PWA fake fullscreen ON');
         }
 
-        function exitFakeFs() {
+        function exitFs() {
             if (!fakeFsActive) return;
             try {
-                if (fakeContainer && savedContainerStyle !== null) {
-                    fakeContainer.setAttribute('style', savedContainerStyle);
-                }
+                if (container && savedStyle !== null) container.setAttribute('style', savedStyle);
             } catch (_) {}
             try { document.documentElement.style.overflow = ''; } catch (_) {}
             try { document.body.style.overflow = ''; } catch (_) {}
             fakeFsActive = false;
-            log('iOS fake fullscreen OFF');
+            log('PWA fake fullscreen OFF');
         }
 
-        // 1) Intercetta il click sul pulsante fullscreen di JW Player
         document.addEventListener('click', function (e) {
             const t = e.target;
             if (!t || !t.closest) return;
             const btn = t.closest(
                 '.jw-icon-fullscreen, .jw-icon-fullscreen-on, .jw-icon-fullscreen-off, ' +
-                '[aria-label*="ullscreen"], [aria-label*="schermo intero"], [aria-label*="Schermo intero"]'
+                '[aria-label*="ullscreen"], [aria-label*="chermo Intero"], [aria-label*="chermo intero"]'
             );
             if (!btn) return;
             e.preventDefault();
             e.stopPropagation();
             e.stopImmediatePropagation();
-            if (fakeFsActive) exitFakeFs();
-            else enterFakeFs();
+            if (fakeFsActive) exitFs();
+            else enterFs();
         }, true);
 
-        // 2) Belt-and-suspenders: se iOS entra in native, esci e usa CSS
-        try {
-            video.addEventListener('webkitbeginfullscreen', function () {
-                log('iOS native fullscreen detected, exiting');
-                setTimeout(function () {
-                    try { video.webkitExitFullscreen(); } catch (_) {}
-                    if (!fakeFsActive) enterFakeFs();
-                }, 50);
-            });
-        } catch (_) {}
-
-        // 3) Doppio tap ESC: esci dal fake fullscreen
         document.addEventListener('keydown', function (e) {
-            if (e.key === 'Escape' && fakeFsActive) {
-                exitFakeFs();
-            }
+            if (e.key === 'Escape' && fakeFsActive) exitFs();
         });
     }
 
