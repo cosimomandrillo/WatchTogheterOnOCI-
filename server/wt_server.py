@@ -512,6 +512,7 @@ async def handler(ws):
                         "created_at": time.time(),
                         "cleanup_task": None,
                         "persistent": persistent,
+                        "leader_ws": None,
                     }
                     if persistent:
                         db_upsert(r, p, token, url,
@@ -602,6 +603,12 @@ async def handler(ws):
                 my_author = author
                 ROOMS[room]["authors"][ws] = author
 
+                # Leader election: primo client connesso = leader heartbeat
+                r_obj = ROOMS[room]
+                if r_obj.get("leader_ws") is None or r_obj["leader_ws"] not in r_obj["clients"]:
+                    r_obj["leader_ws"] = ws
+                is_leader = r_obj["leader_ws"] is ws
+
                 try:
                     await ws.send(json.dumps({
                         "type": "welcome",
@@ -609,6 +616,7 @@ async def handler(ws):
                         "url": ROOMS[r].get("url", ""),
                         "clients": len(ROOMS[r]["clients"]),
                         "isOwner": owner,
+                        "isLeader": is_leader,
                         "hasPassword": bool(ROOMS[r].get("password", "")),
                         "ownerToken": out_token,
                         "persistent": bool(ROOMS[r].get("persistent", False)),
@@ -706,6 +714,7 @@ async def handler(ws):
                     "created_at": time.time(),
                     "cleanup_task": None,
                     "persistent": True,
+                    "leader_ws": None,
                 }
                 db_upsert(name, password, token, url)
                 await broadcast_room_list()
@@ -752,6 +761,17 @@ async def handler(ws):
                 continue
 
             if room is None:
+                continue
+
+            if t == "h":
+                # Heartbeat compatto: nessun room/pass nel payload.
+                # Inoltra solo se ci sono altri peer.
+                peers_h = ROOMS.get(room, {}).get("clients", set())
+                if len(peers_h) > 1:
+                    await asyncio.gather(
+                        *(p.send(raw) for p in tuple(peers_h) if p is not ws),
+                        return_exceptions=True,
+                    )
                 continue
 
             r = msg.get("room")
@@ -904,7 +924,7 @@ def join(room: str, ws) -> None:
         "clients": set(), "authors": {}, "chat": [], "state": None,
         "password": "", "owner_token": "", "url": "",
         "created_at": time.time(), "cleanup_task": None,
-        "persistent": False,
+        "persistent": False, "leader_ws": None,
     })
     r["clients"].add(ws)
 
@@ -915,6 +935,18 @@ async def leave(room: str, ws, notify: bool = False) -> None:
         return
     r["clients"].discard(ws)
     author = r.get("authors", {}).pop(ws, None)
+
+    # Leader promotion: se il leader esce, il prossimo diventa leader
+    if r.get("leader_ws") is ws:
+        remaining = list(r["clients"])
+        r["leader_ws"] = remaining[0] if remaining else None
+        if r["leader_ws"] is not None:
+            try:
+                await r["leader_ws"].send(json.dumps({"type": "you-are-leader"}))
+                log.info(f"nuovo leader in {room!r}")
+            except Exception:
+                pass
+
     if notify and author:
         await broadcast(room, {
             "type": "presence",
@@ -968,6 +1000,7 @@ async def main():
             "created_at": data["created_at"],
             "cleanup_task": None,
             "persistent": True,
+            "leader_ws": None,
         }
         log.info(f"caricata stanza persistente: {name!r}")
 

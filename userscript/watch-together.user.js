@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      5.0.1
+// @version      5.1.0
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -486,10 +486,10 @@ function extractVideoUrl(url) {
         }
     }
 
-    const THRESHOLD_PLAY  = 1.5;
-    const THRESHOLD_PAUSE = 0.5;
-    const THRESHOLD_TICK  = 3.0;
-    const TICK_INTERVAL   = 15000;
+    const THRESHOLD_PLAY  = 0.15;
+    const THRESHOLD_PAUSE = 0.15;
+    const THRESHOLD_TICK  = 0.20;
+    const HEARTBEAT_MS    = 1000;
     const RECONNECT_MIN   = 2000;
     const RECONNECT_MAX   = 60000;
     const LOCK_MS         = 250;
@@ -532,6 +532,8 @@ function extractVideoUrl(url) {
     let persistent = false;
     let autoplayArmed = false;
     let pendingNavigateFlag = false;
+    let isLeader = false;
+    let heartbeatTimer = null;
 
     function pickVideo() {
         const vids = Array.from(document.querySelectorAll('video')).filter(v => v.readyState >= 1);
@@ -665,8 +667,8 @@ function extractVideoUrl(url) {
             video.setAttribute('webkit-playsinline', '');
             video.playsInline = true;
         } catch (_) {}
-        video.addEventListener('play', () => { startTicker(); send({ type: 'play', t: video.currentTime }); });
-        video.addEventListener('pause', () => { stopTicker(); send({ type: 'pause', t: video.currentTime }); });
+        video.addEventListener('play', () => { send({ type: 'play', t: video.currentTime }); });
+        video.addEventListener('pause', () => { send({ type: 'pause', t: video.currentTime }); });
         video.addEventListener('seeked', () => { send({ type: 'seek', t: video.currentTime }); });
     }
 
@@ -916,8 +918,9 @@ function extractVideoUrl(url) {
             'color:' + THEME.text,
             'display:none', 'flex-direction:column', 'overflow:hidden',
             'font:14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-            'backdrop-filter:blur(22px) saturate(160%)',
-            '-webkit-backdrop-filter:blur(22px) saturate(160%)',
+            'background:rgba(18, 18, 22, 0.82)',
+            'backdrop-filter:blur(8px) saturate(140%)',
+            '-webkit-backdrop-filter:blur(8px) saturate(140%)',
             'transition:transform .25s cubic-bezier(.32,.72,0,1), opacity .2s ease'
         ].join(';'));
 
@@ -1803,7 +1806,8 @@ function extractVideoUrl(url) {
         ws.onclose = (ev) => {
             connected = false;
             isOwner = false;
-            stopTicker();
+            isLeader = false;
+            stopHeartbeat();
             if (authFailed) return;
             const wait = reconnectDelay;
             setStatus('disconnected', room + ' · retry ' + Math.round(wait/1000) + 's');
@@ -1820,6 +1824,8 @@ function extractVideoUrl(url) {
             if (m.type === 'welcome') {
                 connected = true;
                 isOwner = !!m.isOwner;
+                isLeader = !!m.isLeader;
+                if (isLeader) startHeartbeat();
                 if (m.ownerToken) {
                     ownerToken = m.ownerToken;
                     setOwnerToken(room, m.ownerToken);
@@ -1897,6 +1903,12 @@ function extractVideoUrl(url) {
                         }));
                     } catch (_) {}
                 })();
+                return;
+            }
+            if (m.type === 'you-are-leader') {
+                isLeader = true;
+                startHeartbeat();
+                log('promosso a leader heartbeat');
                 return;
             }
             if (m.type === 'navigate') {
@@ -2056,7 +2068,12 @@ function extractVideoUrl(url) {
 
     function send(o) {
         if (!connected || ws.readyState !== 1) { log('send: socket non pronto', o.type); return; }
-        if (lock && (o.type === 'play' || o.type === 'pause' || o.type === 'seek' || o.type === 'tick')) {
+        if (lock && (o.type === 'play' || o.type === 'pause' || o.type === 'seek' || o.type === 'h')) {
+            return;
+        }
+        if (o.type === 'h') {
+            try { ws.send(JSON.stringify({ type: 'h', v: o.v, s: o.s })); }
+            catch (e) { log('send h fail', e); }
             return;
         }
         o.room = room;
@@ -2066,16 +2083,23 @@ function extractVideoUrl(url) {
     }
 
     // =================================================================
-    function startTicker() {
-        stopTicker();
-        const jitter = Math.random() * 3000;
-        tickTimer = setInterval(() => {
-            if (!connected || video.paused || lock) return;
-            send({ type: 'tick', t: video.currentTime });
-        }, TICK_INTERVAL + jitter);
+    function startHeartbeat() {
+        stopHeartbeat();
+        heartbeatTimer = setInterval(() => {
+            if (!connected || !ws || ws.readyState !== 1) return;
+            if (!isLeader) return;
+            if (!video || video.readyState < 2) return;
+            try {
+                ws.send(JSON.stringify({
+                    type: 'h',
+                    v: Math.round(video.currentTime * 100) / 100,
+                    s: video.paused ? 'p' : 'r',
+                }));
+            } catch (_) {}
+        }, HEARTBEAT_MS);
     }
-    function stopTicker() {
-        if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+    function stopHeartbeat() {
+        if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
     }
 
     // =================================================================
@@ -2236,6 +2260,42 @@ function armUnmuteOnGesture() {
   }
 
     // =================================================================
+    function handleHeartbeat(m) {
+        if (!video) return;
+        const targetTime = (typeof m.v === 'number') ? m.v : null;
+        const targetPlaying = (m.s === 'r');
+        const drift = targetTime !== null ? Math.abs(video.currentTime - targetTime) : 0;
+
+        // 1) Stato diverso: forza play o pausa
+        if (targetPlaying && video.paused) {
+            if (targetTime !== null && drift > THRESHOLD_TICK) {
+                lock = true;
+                try { video.currentTime = targetTime; } catch (_) {}
+                setTimeout(() => { lock = false; }, 100);
+            }
+            tryPlayVideo();
+            return;
+        }
+        if (!targetPlaying && !video.paused) {
+            lock = true;
+            try {
+                video.pause();
+                if (targetTime !== null && drift > THRESHOLD_TICK) {
+                    video.currentTime = targetTime;
+                }
+            } catch (_) {}
+            setTimeout(() => { lock = false; }, 500);
+            return;
+        }
+
+        // 2) Stesso stato: correggi solo il drift se supera la soglia
+        if (targetPlaying && !video.paused && targetTime !== null && drift > THRESHOLD_TICK) {
+            lock = true;
+            try { video.currentTime = targetTime; } catch (_) {}
+            setTimeout(() => { lock = false; }, 100);
+        }
+    }
+
     function handle(m) {
         if (!m || !m.type) return;
 
@@ -2272,15 +2332,10 @@ function armUnmuteOnGesture() {
             return;
         }
 
-        if (m.type === 'tick') {
-            // Ignora i tick se siamo in pausa. Il peer che vuole farci
-            // ripartire manderà un play esplicito, non un tick.
-            if (video.paused) return;
-            if (Math.abs(video.currentTime - m.t) > THRESHOLD_TICK) {
-                lock = true;
-                try { video.currentTime = m.t; }
-                finally { setTimeout(() => { lock = false; }, 100); }
-            }
+        if (m.type === 'h') {
+            // Heartbeat del leader: garantisce stato play/pausa identico
+            // e tempo allineato entro THRESHOLD_TICK.
+            handleHeartbeat(m);
             return;
         }
 
