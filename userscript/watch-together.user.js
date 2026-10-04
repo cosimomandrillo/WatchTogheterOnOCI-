@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      5.4.2
+// @version      6.0.0
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -415,7 +415,7 @@ function extractVideoMeta() {
         var title = '';
         var description = '';
         try {
-            // Selettori specifici StreamingCommunity
+            // Selettori comuni del player
             var t = document.querySelector('.video-title');
             if (t) title = (t.textContent || '').trim();
             if (!title) t = document.querySelector('.film-title, .serie-title, h1.title, .title');
@@ -582,7 +582,6 @@ function extractVideoUrl(url) {
         buildUI();
         attachVideoListeners();
         attachNextEpisodeInterceptor();
-        try { setupIosFakeFullscreen(); } catch (_) {}
 
         pageUrl = await resolvePageUrl();
         log('pageUrl:', pageUrl);
@@ -1382,7 +1381,7 @@ function extractVideoUrl(url) {
             ].join(';'), 'Stanze disponibili'));
 
             const list = el('div', 'display:flex;flex-direction:column;gap:6px;margin-bottom:16px');
-            rooms.forEach(r => {
+            rooms.forEach((r, idx) => {
                 const ownToken = getOwnerToken(r.name);
                 const row = el('div', [
                     'padding:12px 14px',
@@ -1393,6 +1392,9 @@ function extractVideoUrl(url) {
                                'cursor:pointer',
                                '-webkit-tap-highlight-color:transparent'
                 ].join(';'));
+                row.style.opacity = '0';
+                row.style.animation = 'wt-row-in .35s ease forwards';
+                row.style.animationDelay = (idx * 0.05) + 's';
                 row.addEventListener('mouseenter', () => { row.style.background = 'rgba(255,255,255,.07)'; });
                 row.addEventListener('mouseleave', () => { row.style.background = 'rgba(255,255,255,.03)'; });
 
@@ -1630,6 +1632,11 @@ function extractVideoUrl(url) {
         const g = glows[state] || glows.connecting;
         badgeDot.style.background = c;
         badgeDot.style.boxShadow = '0 0 0 3px ' + hexA(c, .28) + ', 0 0 10px ' + g;
+        if (state === 'connected') badgeDot.style.animation = 'wt-status-pulse 2s ease-in-out infinite';
+        else if (state === 'connecting') badgeDot.style.animation = 'wt-status-pulse-warn 1.4s ease-in-out infinite';
+        else if (state === 'error') { badgeDot.style.animation = 'wt-badge-pop 0.4s ease'; setTimeout(function(){ try { badgeDot.style.animation=''; } catch(_){} }, 500); }
+        else badgeDot.style.animation = '';
+        if (badge) badge.style.animation = (state === 'connected') ? 'wt-glow 3s ease-in-out infinite' : '';
         badgeLabel.textContent = text;
         const headerDot = document.getElementById('__wt_header_dot__');
         if (headerDot) {
@@ -1651,6 +1658,8 @@ function extractVideoUrl(url) {
         if (unread > 0 && !sheetOpen) {
             badgeUnread.style.display = 'inline-block';
             badgeUnread.textContent = unread > 99 ? '99+' : String(unread);
+            badgeUnread.style.animation = 'none'; void badgeUnread.offsetWidth;
+            badgeUnread.style.animation = 'wt-badge-pop 0.4s ease';
         } else {
             badgeUnread.style.display = 'none';
         }
@@ -1684,11 +1693,17 @@ function extractVideoUrl(url) {
                 'font-style:italic', 'opacity:0',
                 'transition:opacity .2s ease'
             ].join(';');
-            const dot = document.createElement('span');
-            dot.style.cssText = 'display:inline-block;width:6px;height:6px;border-radius:50%;' +
-                'background:' + THEME.accent + ';box-shadow:0 0 8px ' + THEME.accent + ';' +
-                'animation:wt-typing-blink 1.2s ease-in-out infinite';
-            el.appendChild(dot);
+            const dots = document.createElement('span');
+            dots.style.cssText = 'display:inline-flex;gap:3px;align-items:center';
+            for (let di = 0; di < 3; di++) {
+                const dot = document.createElement('span');
+                dot.style.cssText = 'display:inline-block;width:5px;height:5px;border-radius:50%;' +
+                    'background:' + THEME.accent + ';box-shadow:0 0 6px ' + THEME.accent + ';' +
+                    'animation:wt-typing-bounce 1.2s ease-in-out infinite;' +
+                    'animation-delay:' + (di * 0.15) + 's';
+                dots.appendChild(dot);
+            }
+            el.appendChild(dots);
             const txt = document.createElement('span');
             txt.id = '__wt_typing_txt__';
             el.appendChild(txt);
@@ -1710,7 +1725,7 @@ function extractVideoUrl(url) {
             'display:flex', 'gap:9px',
             isOwn ? 'flex-direction:row-reverse' : 'flex-direction:row',
             'align-items:flex-end', 'width:100%',
-            'animation:wt-slide-in .25s cubic-bezier(.2,.9,.3,1.3)',
+            'animation:wt-msg-pop .35s cubic-bezier(.2,.9,.3,1.3)',
             'margin-bottom:2px'
         ].join(';'));
 
@@ -2485,203 +2500,6 @@ function armUnmuteOnGesture() {
     // Su iOS il fullscreen nativo (webkitEnterFullscreen) crea un player
     // di sistema senza possibilità di overlay DOM. Lo intercettiamo e
     // usiamo CSS fullscreen: video a tutto schermo, ma chat/badge visibili.
-    function setupIosFakeFullscreen() {
-        if (window.__wt_ios_fs_init) return;
-        window.__wt_ios_fs_init = true;
-
-        const isVixCloud = /(^|\.)vixcloud\.co$/i.test(location.hostname);
-        const isSCIframe = /\/it\/iframe\/\d+/.test(location.pathname);
-        const isWatchTop  = IS_TOP && /\/it\/watch\/\d+/.test(location.pathname);
-        const isAnyTop    = IS_TOP;
-
-        // ============================================================
-        // A) VIXCLOUD (dove vive il player)
-        // ============================================================
-        if (isVixCloud) {
-            let fsOn = false, savedStyle = null, container = null, exitBtn = null;
-
-            function findContainer() {
-                try {
-                    if (video && video.closest) {
-                        const el = video.closest('.jwplayer, [class*="jwplayer"], [class*="jw-media"]');
-                        if (el) return el;
-                    }
-                    if (video && video.parentElement) return video.parentElement;
-                } catch (_) {}
-                return document.body;
-            }
-
-            function showExitBtn() {
-                if (exitBtn) return;
-                exitBtn = document.createElement('div');
-                exitBtn.textContent = '\u2715';
-                exitBtn.style.cssText = [
-                    'position:fixed', 'top:14px', 'left:14px',
-                    'z-index:2147483647',
-                    'width:42px', 'height:42px', 'border-radius:50%',
-                    'background:rgba(0,0,0,.65)', 'color:#fff',
-                    'font:700 24px/1 -apple-system,sans-serif',
-                    'display:flex', 'align-items:center', 'justify-content:center',
-                    'cursor:pointer', '-webkit-tap-highlight-color:transparent',
-                    'backdrop-filter:blur(10px)',
-                    '-webkit-backdrop-filter:blur(10px)',
-                    'box-shadow:0 4px 14px rgba(0,0,0,.5)'
-                ].join(';');
-                exitBtn.onclick = function (e) {
-                    try { e.stopPropagation(); } catch (_) {}
-                    collapse();
-                };
-                document.body.appendChild(exitBtn);
-            }
-            function hideExitBtn() {
-                if (exitBtn) { try { exitBtn.remove(); } catch (_) {} exitBtn = null; }
-            }
-
-            function expand() {
-                if (fsOn) return;
-                container = findContainer();
-                savedStyle = container.getAttribute('style') || '';
-                container.style.cssText += ';' + [
-                    'position:fixed !important',
-                    'top:0 !important', 'left:0 !important',
-                    'width:100vw !important', 'height:100vh !important',
-                    'z-index:2147483000 !important',
-                    'background:#000 !important',
-                    'margin:0 !important'
-                ].join(';') + ';';
-                try { document.documentElement.style.cssText += ';width:100vw!important;height:100vh!important;overflow:hidden!important;margin:0!important;'; } catch (_) {}
-                try { document.body.style.cssText += ';width:100vw!important;height:100vh!important;overflow:hidden!important;margin:0!important;padding:0!important;background:#000!important;'; } catch (_) {}
-                fsOn = true;
-                showExitBtn();
-                try { window.parent.postMessage({ __wt_fs_expand__: true }, '*'); } catch (_) {}
-                log('FS expand (vixcloud)');
-            }
-
-            function collapse() {
-                if (!fsOn) return;
-                try { if (container && savedStyle !== null) container.setAttribute('style', savedStyle); } catch (_) {}
-                try { document.documentElement.removeAttribute('style'); } catch (_) {}
-                try { document.body.removeAttribute('style'); } catch (_) {}
-                fsOn = false;
-                hideExitBtn();
-                try { window.parent.postMessage({ __wt_fs_collapse__: true }, '*'); } catch (_) {}
-                log('FS collapse (vixcloud)');
-            }
-
-            document.addEventListener('click', function (e) {
-                const t = e.target;
-                if (!t || !t.closest) return;
-                const btn = t.closest(
-                    '.jw-icon-fullscreen, .jw-icon-fullscreen-on, .jw-icon-fullscreen-off, ' +
-                    '[aria-label*="ullscreen"], [aria-label*="chermo Intero"], [aria-label*="chermo intero"]'
-                );
-                if (!btn) return;
-                e.preventDefault();
-                e.stopPropagation();
-                e.stopImmediatePropagation();
-                if (fsOn) collapse(); else expand();
-            }, true);
-
-            window.addEventListener('message', function (e) {
-                if (e.data && e.data.__wt_fs_collapse__ && fsOn) collapse();
-            });
-        }
-
-        // ============================================================
-        // B) SC IFRAME (/it/iframe/NNN) — same-origin col top
-        // ============================================================
-        if (isSCIframe && !isVixCloud) {
-            let selfOn = false, selfSaved = null;
-            window.addEventListener('message', function (e) {
-                if (!e.data) return;
-                if (e.data.__wt_fs_expand__) {
-                    if (!selfOn) {
-                        selfSaved = document.body.getAttribute('style') || '';
-                        document.body.style.cssText += ';' + [
-                            'position:fixed !important',
-                            'top:0 !important', 'left:0 !important',
-                            'width:100vw !important', 'height:100vh !important',
-                            'margin:0 !important', 'padding:0 !important',
-                            'overflow:hidden !important',
-                            'background:#000 !important',
-                            'z-index:2147482000 !important'
-                        ].join(';') + ';';
-                        try { document.documentElement.style.cssText += ';width:100vw!important;height:100vh!important;overflow:hidden!important;margin:0!important;'; } catch (_) {}
-                        // Assicura che l'iframe figlio sia 100%
-                        try {
-                            document.querySelectorAll('iframe').forEach(function (f) {
-                                f.style.cssText += ';width:100%!important;height:100%!important;border:0!important;display:block!important;';
-                            });
-                        } catch (_) {}
-                        selfOn = true;
-                    }
-                    try { window.top.postMessage({ __wt_fs_expand__: true }, '*'); } catch (_) {}
-                    log('FS expand (SC iframe)');
-                }
-                if (e.data.__wt_fs_collapse__) {
-                    if (selfOn && selfSaved !== null) {
-                        document.body.setAttribute('style', selfSaved);
-                        selfOn = false;
-                    }
-                    try { document.documentElement.removeAttribute('style'); } catch (_) {}
-                    try { window.top.postMessage({ __wt_fs_collapse__: true }, '*'); } catch (_) {}
-                    log('FS collapse (SC iframe)');
-                }
-            });
-        }
-
-        // ============================================================
-        // C) TOP (streamingcommunity.../it/watch/NNN)
-        // ============================================================
-        if (isWatchTop) {
-            let topOn = false, topSaved = null, hidden = [];
-            window.addEventListener('message', function (e) {
-                if (!e.data) return;
-                if (e.data.__wt_fs_expand__) {
-                    if (topOn) return;
-                    topSaved = document.body.getAttribute('style') || '';
-                    // Nascondi tutto tranne .watch e <style>/<script>
-                    document.querySelectorAll('body > *').forEach(function (el) {
-                        if (el.classList && el.classList.contains('watch')) return;
-                        if (el.tagName === 'SCRIPT' || el.tagName === 'STYLE') return;
-                        hidden.push({ el: el, disp: el.style.display });
-                        el.style.display = 'none';
-                    });
-                    const w = document.querySelector('.watch');
-                    if (w) w.style.cssText += ';' + [
-                        'position:fixed !important',
-                        'top:0 !important', 'left:0 !important',
-                        'width:100vw !important', 'height:100vh !important',
-                        'margin:0 !important', 'padding:0 !important',
-                        'z-index:2147482000 !important',
-                        'background:#000 !important'
-                    ].join(';') + ';';
-                    try {
-                        document.querySelectorAll('.watch iframe').forEach(function (f) {
-                            f.style.cssText += ';width:100%!important;height:100%!important;border:0!important;display:block!important;';
-                        });
-                    } catch (_) {}
-                    try { document.documentElement.style.cssText += ';overflow:hidden!important;margin:0!important;'; } catch (_) {}
-                    try { document.body.style.cssText += ';overflow:hidden!important;margin:0!important;padding:0!important;background:#000!important;'; } catch (_) {}
-                    topOn = true;
-                    log('FS expand (top)');
-                }
-                if (e.data.__wt_fs_collapse__) {
-                    if (!topOn) return;
-                    if (topSaved !== null) document.body.setAttribute('style', topSaved);
-                    hidden.forEach(function (o) { try { o.el.style.display = o.disp || ''; } catch (_) {} });
-                    hidden = [];
-                    const w = document.querySelector('.watch');
-                    if (w) w.setAttribute('style', '');
-                    try { document.documentElement.removeAttribute('style'); } catch (_) {}
-                    try { document.body.removeAttribute('style'); } catch (_) {}
-                    topOn = false;
-                    log('FS collapse (top)');
-                }
-            });
-        }
-    }
-
     function handle(m) {
         if (!m || !m.type) return;
 
@@ -2758,6 +2576,13 @@ function armUnmuteOnGesture() {
         0%,100% { transform:translate(-50%,-50%) scale(1); box-shadow:0 10px 40px rgba(34,197,94,.55), 0 0 0 4px rgba(34,197,94,.2); }
         50%     { transform:translate(-50%,-50%) scale(1.05); box-shadow:0 14px 50px rgba(34,197,94,.75), 0 0 0 10px rgba(34,197,94,.08); }
     }
+    @keyframes wt-badge-pop { 0% { transform: scale(1); } 40% { transform: scale(1.18); } 100% { transform: scale(1); } }
+    @keyframes wt-msg-pop { 0% { opacity: 0; transform: translateY(10px) scale(.94); } 60% { opacity: 1; transform: translateY(-1px) scale(1.01); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
+    @keyframes wt-status-pulse { 0%,100% { box-shadow: 0 0 0 3px rgba(34,197,94,.28), 0 0 10px rgba(34,197,94,.6); } 50% { box-shadow: 0 0 0 6px rgba(34,197,94,.15), 0 0 20px rgba(34,197,94,.9); } }
+    @keyframes wt-status-pulse-warn { 0%,100% { box-shadow: 0 0 0 3px rgba(245,158,11,.28), 0 0 10px rgba(245,158,11,.6); } 50% { box-shadow: 0 0 0 6px rgba(245,158,11,.15), 0 0 20px rgba(245,158,11,.9); } }
+    @keyframes wt-typing-bounce { 0%,60%,100% { transform: translateY(0); opacity: .35; } 30% { transform: translateY(-4px); opacity: 1; } }
+    @keyframes wt-row-in { 0% { opacity: 0; transform: translateX(-8px); } 100% { opacity: 1; transform: translateX(0); } }
+    @keyframes wt-glow { 0%,100% { box-shadow: 0 4px 24px rgba(0,0,0,.85), 0 0 0 1px rgba(0,0,0,.4); } 50% { box-shadow: 0 4px 24px rgba(0,0,0,.85), 0 0 0 1px rgba(0,0,0,.4), 0 0 24px rgba(34,197,94,.4); } }
     `;
     (document.head || document.documentElement).appendChild(styleTag);
 

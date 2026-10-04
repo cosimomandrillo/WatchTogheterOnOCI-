@@ -546,6 +546,48 @@
   }
 
   /* ---------- SKELETON ---------- */
+  /* ---------- ANIMATIONS ADDITIONAL ---------- */
+  @keyframes glowShift {
+    0%,100% { box-shadow: var(--shadow-card); }
+    50%     { box-shadow: var(--shadow-card), 0 0 0 1px rgba(16,217,122,.28), 0 0 30px rgba(16,217,122,.14); }
+  }
+  @keyframes statPop {
+    0%   { transform: scale(1); }
+    40%  { transform: scale(1.22); color: var(--accent); }
+    100% { transform: scale(1); }
+  }
+  @keyframes shake {
+    0%,100% { transform: translateX(0); }
+    15%     { transform: translateX(-8px); }
+    30%     { transform: translateX(7px); }
+    45%     { transform: translateX(-5px); }
+    60%     { transform: translateX(4px); }
+    75%     { transform: translateX(-2px); }
+  }
+  @keyframes fabPulse {
+    0%,100% { box-shadow: 0 16px 40px rgba(16,217,122,.38), 0 4px 12px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.3); }
+    50%     { box-shadow: 0 16px 46px rgba(16,217,122,.55), 0 4px 12px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.3); }
+  }
+  @keyframes confettiFall {
+    0%   { transform: translateY(0) rotate(0deg); opacity: 1; }
+    100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
+  }
+  @keyframes toastInScale {
+    from { opacity: 0; transform: translateY(14px) scale(.92); }
+    to   { opacity: 1; transform: none; }
+  }
+  .stat-num{transition: color .2s ease}
+  .stat-num.bump{animation: statPop .5s cubic-bezier(.2,.9,.3,1.3)}
+  .fab{animation: fabPulse 3s ease-in-out infinite}
+  .fab:hover{animation: none}
+  .modal.shake{animation: shake .5s cubic-bezier(.36,.07,.19,.97)}
+  .toast{animation: toastInScale .34s cubic-bezier(.2,.9,.3,1.3)}
+  .confetti{
+    position:fixed;top:-10px;pointer-events:none;z-index:3000;
+    width:10px;height:10px;border-radius:2px;
+    animation: confettiFall linear forwards;
+  }
+
   .skel{
     height:86px;border-radius:var(--r);
     background:linear-gradient(90deg,
@@ -712,7 +754,7 @@
     <div class="field"><label>Password <span style="text-transform:none;color:var(--dim2);font-weight:500">(opzionale)</span></label>
       <input id="permPass" type="password" placeholder="lascia vuoto per stanza pubblica" maxlength="64" autocomplete="new-password"></div>
     <div class="field"><label>URL del video iniziale</label>
-      <input id="permUrl" type="text" placeholder="https://streamingcommunityz.pictures/it/watch/…" autocomplete="off">
+      <input id="permUrl" type="text" placeholder="https://esempio.com/watch/…" autocomplete="off">
       <div class="hint">Puoi anche incollare solo l'URL parziale — verrà aggiornato automaticamente.</div></div>
     <div class="msg" id="permMsg"></div>
     <div class="modal-actions">
@@ -855,6 +897,40 @@ function refreshAdminUI(){
   render();
 }
 
+function animateStat(id, val){
+  var el = $(id);
+  if (!el) return;
+  var cur = parseInt(el.textContent, 10) || 0;
+  if (cur === val) return;
+  el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump');
+  el.textContent = val;
+}
+
+function launchConfetti(){
+  var colors = ['#10d97a','#60a5fa','#fbbf24','#f87171','#a78bfa','#f472b6'];
+  for (var i = 0; i < 42; i++){
+    (function(k){
+      var c = document.createElement('div');
+      c.className = 'confetti';
+      c.style.left = (Math.random() * 100) + 'vw';
+      c.style.background = colors[Math.floor(Math.random()*colors.length)];
+      c.style.animationDuration = (1.8 + Math.random() * 1.6) + 's';
+      c.style.animationDelay = (Math.random() * 0.4) + 's';
+      c.style.transform = 'rotate(' + (Math.random()*360) + 'deg)';
+      c.style.width = c.style.height = (6 + Math.random()*8) + 'px';
+      document.body.appendChild(c);
+      setTimeout(function(){ try { c.remove(); } catch(_){} }, 3800);
+    })(i);
+  }
+}
+
+function shakeModal(id){
+  var m = $(id) ? $(id).querySelector('.modal') : null;
+  if (!m) return;
+  m.classList.remove('shake'); void m.offsetWidth; m.classList.add('shake');
+  setTimeout(function(){ m.classList.remove('shake'); }, 600);
+}
+
 function render(){
   var list = $('list');
   var q = searchQuery.trim().toLowerCase();
@@ -866,8 +942,8 @@ function render(){
   });
 
   var totalUsers = currentRooms.reduce(function(a, r){ return a + r.clients; }, 0);
-  $('statRooms').textContent = currentRooms.length;
-  $('statUsers').textContent = totalUsers;
+  animateStat('statRooms', currentRooms.length);
+  animateStat('statUsers', totalUsers);
 
   if (firstLoad && currentRooms.length === 0){
     list.innerHTML = '';
@@ -887,7 +963,7 @@ function render(){
       if (!currentRooms.length){
         e.innerHTML = '<span class="emoji">\uD83C\uDFAC</span>' +
           '<h2>Nessuna stanza attiva</h2>' +
-          '<p>Apri un video su StreamingCommunity e creane una per iniziare a guardare insieme.</p>';
+          '<p>Apri un video e creane una per iniziare a guardare insieme.</p>';
       } else {
         e.innerHTML = '<span class="emoji">\uD83D\uDD0D</span>' +
           '<h2>Nessun risultato</h2>' +
@@ -1184,6 +1260,7 @@ $('joinSubmit').onclick = function(){
       location.href = r.url.split('#')[0] + '#' + frag;
     } else {
       msg.className='msg err'; msg.textContent = m.message || 'Password errata';
+      shakeModal('joinModal');
     }
   }, { closeOnReply:true, timeout:5000 });
 };
@@ -1256,6 +1333,7 @@ $('permBtn').onclick = function(){
       try { sessionStorage.setItem('wt_pending_owner_' + name, m.ownerToken || ''); } catch(_){}
       msg.className = 'msg ok'; msg.textContent = '✅ Stanza "' + name + '" creata';
       toast('Stanza "' + name + '" creata', 'success');
+      try { launchConfetti(); } catch (_) {}
       $('permName').value = ''; $('permPass').value = ''; $('permUrl').value = '';
       setTimeout(function(){ closeModal('createModal'); loadRooms(); }, 400);
     } else if (m.type === 'error'){
@@ -1311,6 +1389,7 @@ loadScriptVersion();
 refreshAdminUI(); }, 400);
     } else if (m.type === 'error'){
       msg.className = 'msg err'; msg.textContent = m.message || 'Credenziali errate';
+      shakeModal('loginModal');
     }
   }, { closeOnReply: true, timeout: 5000 });
 };
