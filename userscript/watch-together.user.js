@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      5.2.0
+// @version      5.2.1
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -680,6 +680,17 @@ function extractVideoUrl(url) {
                 try { handleHeartbeat(hb); } catch (_) {}
             }
         });
+        try {
+            video.addEventListener('webkitbeginfullscreen', () => {
+                window.__wt_nativeFullscreen = true;
+                log('iOS: entrato native fullscreen');
+            });
+            video.addEventListener('webkitendfullscreen', () => {
+                window.__wt_nativeFullscreen = false;
+                log('iOS: uscito da native fullscreen');
+            });
+        } catch (_) {}
+
         video.addEventListener('error', () => {
             if (!video.error) return;
             const code = video.error.code || 0;
@@ -866,6 +877,26 @@ function extractVideoUrl(url) {
     }
 
     // =================================================================
+    function __wt_appendToCorrectParent(el) {
+        if (!el) return;
+        const fs = document.fullscreenElement || document.webkitFullscreenElement || null;
+        const target = fs || document.body;
+        if (el.parentNode !== target) {
+            try { target.appendChild(el); } catch (_) {}
+        }
+    }
+
+    function __wt_onFullscreenChange() {
+        const list = [];
+        if (typeof badge !== 'undefined') list.push(badge);
+        if (typeof sheet !== 'undefined') list.push(sheet);
+        if (typeof optionsPanel !== 'undefined') list.push(optionsPanel);
+        if (typeof roomPickerEl !== 'undefined') list.push(roomPickerEl);
+        list.forEach(function (el) { __wt_appendToCorrectParent(el); });
+        const fs = document.fullscreenElement || document.webkitFullscreenElement || null;
+        log('fullscreenchange, target=' + (fs ? fs.tagName + '.' + (fs.className || '').slice(0,40) : 'none'));
+    }
+
     function buildUI() {
         if (!document.body) {
             const wait = setInterval(() => {
@@ -1076,6 +1107,12 @@ function extractVideoUrl(url) {
         document.body.appendChild(sheet);
         document.body.appendChild(badge);
         document.body.appendChild(optionsPanel);
+
+        if (!window.__wt_fs_listeners__) {
+            window.__wt_fs_listeners__ = true;
+            document.addEventListener('fullscreenchange', __wt_onFullscreenChange);
+            document.addEventListener('webkitfullscreenchange', __wt_onFullscreenChange);
+        }
 
         document.addEventListener('mousedown', (e) => {
             if (!sheetOpen && !optionsOpen) return;
@@ -1481,7 +1518,7 @@ function extractVideoUrl(url) {
 
         card.appendChild(body);
         roomPickerEl.appendChild(card);
-        document.body.appendChild(roomPickerEl);
+        try { __wt_appendToCorrectParent(roomPickerEl); } catch (_) {}
     }
 
     function pickRoom(name, hasPassword, roomUrl) {
@@ -1532,6 +1569,7 @@ function extractVideoUrl(url) {
     function openSheet() {
         sheetOpen = true;
         closeOptions();
+        try { __wt_appendToCorrectParent(sheet); } catch (_) {}
         sheet.style.display = 'flex';
         requestAnimationFrame(() => {
             if (IS_MOBILE) sheet.style.transform = 'translateY(0)';
@@ -1563,6 +1601,7 @@ function extractVideoUrl(url) {
         });
         const box = document.getElementById('__wt_owner_box__');
         if (box) box.style.display = (isOwner && connected) ? 'block' : 'none';
+        try { __wt_appendToCorrectParent(optionsPanel); } catch (_) {}
         optionsPanel.style.display = 'flex';
         requestAnimationFrame(() => {
             if (IS_MOBILE) optionsPanel.style.transform = 'translateY(0)';
@@ -2208,25 +2247,32 @@ function extractVideoUrl(url) {
   }
 
   function showTapToStart() {
-    if (document.getElementById('__wt_tap_start__')) return;
+    if (document.getElementById('__wt_tap_wrap__')) return;
+    const wrap = document.createElement('div');
+    wrap.id = '__wt_tap_wrap__';
+    wrap.style.cssText = [
+      'position:fixed', 'inset:0',
+      'z-index:2147483647',
+      'display:flex', 'align-items:center', 'justify-content:center',
+      'pointer-events:none'
+    ].join(';');
     const btn = document.createElement('button');
     btn.id = '__wt_tap_start__';
     btn.textContent = '\u25B6 Tocca per sincronizzare';
     btn.style.cssText = [
-      'position:fixed', 'left:50%', 'top:50%',
-      'transform:translate(-50%,-50%)',
-      'z-index:2147483647',
       'background:linear-gradient(135deg,#22c55e,#16a34a)',
       'color:#fff', 'border:0',
-      'padding:16px 28px', 'border-radius:999px',
+      'padding:14px 24px', 'border-radius:999px',
       'font:700 15px -apple-system,sans-serif',
       'cursor:pointer',
       'box-shadow:0 10px 40px rgba(34,197,94,.55), 0 0 0 4px rgba(34,197,94,.2)',
       'animation:wt-pulse-btn 1.6s ease-in-out infinite',
       '-webkit-tap-highlight-color:transparent',
+      'pointer-events:auto'
     ].join(';');
-    btn.onclick = () => {
-      try { btn.remove(); } catch (_) {}
+    btn.onclick = (ev) => {
+      try { ev.stopPropagation(); } catch (_) {}
+      try { wrap.remove(); } catch (_) {}
       autoplayBlocked = false;
       autoplayAttempts = 0;
       try { video.muted = false; } catch (_) {}
@@ -2236,15 +2282,27 @@ function extractVideoUrl(url) {
          .catch(() => { try { video.muted = true; } catch(_){} video.play(); });
       }
     };
-    document.body.appendChild(btn);
-    // Rimuovilo automaticamente se il video parte
+    wrap.appendChild(btn);
+    document.body.appendChild(wrap);
+
+    const dismiss = () => {
+      try { wrap.remove(); } catch (_) {}
+      document.removeEventListener('pointerup', onOut, true);
+      document.removeEventListener('mousedown', onOut, true);
+      document.removeEventListener('touchstart', onOut, true);
+    };
+    const onOut = (ev) => {
+      if (btn.contains(ev.target)) return;
+      dismiss();
+    };
+    document.addEventListener('pointerup', onOut, true);
+    document.addEventListener('mousedown', onOut, true);
+    document.addEventListener('touchstart', onOut, true);
+
     const iv = setInterval(() => {
-      if (!video || !video.paused) {
-        try { btn.remove(); } catch (_) {}
-        clearInterval(iv);
-      }
-    }, 500);
-    setTimeout(() => { try { btn.remove(); } catch (_) {} clearInterval(iv); }, 15000);
+      if (!video || !video.paused) { dismiss(); clearInterval(iv); }
+    }, 250);
+    setTimeout(() => { dismiss(); clearInterval(iv); }, 12000);
   }
 
 function armAutoPlayOnGesture() {
@@ -2257,6 +2315,7 @@ function armAutoPlayOnGesture() {
         if (sheet && sheet.contains(e.target)) return;
         if (optionsPanel && optionsPanel.contains(e.target)) return;
         if (badge && badge.contains(e.target)) return;
+        if (e.target && e.target.closest && e.target.closest('button, [role="button"], a, input, select, textarea, [contenteditable]')) return;
       } catch (_) {}
 
       document.removeEventListener('pointerup', onUp);
@@ -2305,8 +2364,11 @@ function armUnmuteOnGesture() {
       log('unmute disarmato');
     };
 
-    const onUp = () => {
+    const onUp = (ev) => {
       if (done) return;
+      try {
+        if (ev && ev.target && ev.target.closest && ev.target.closest('button, [role="button"], a, input, select, textarea, [contenteditable]')) return;
+      } catch (_) {}
       cleanup();
       // Aspetta 80ms che il player abbia processato il tap, poi togli il mute
       setTimeout(() => {
