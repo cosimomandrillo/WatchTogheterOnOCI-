@@ -347,6 +347,17 @@
         return new Promise((resolve) => {
             if (IS_TOP) { resolve(location.href); return; }
 
+            try {
+                if (window.top !== window && window.top.location.href) {
+                    const topHref = window.top.location.href;
+                    if (VIDEO_URL_RE.test(topHref)) {
+                        log('URL via top.location (same-origin):', topHref);
+                        resolve(topHref.split('#')[0]);
+                        return;
+                    }
+                }
+            } catch (_) {}
+
             const ref = document.referrer || '';
             if (ref && VIDEO_URL_RE.test(ref)) {
                 log('URL via referrer:', ref);
@@ -424,8 +435,16 @@
                 if (done) return;
                 window.removeEventListener('message', handler);
                 log('timeout URL');
-                resolve('');
-            }, 6000);
+                let fb = document.referrer || '';
+                if (!fb) { try { fb = window.parent.location.href; } catch (_) {} }
+                if (fb) {
+                    const mIf = fb.match(/(https?:\/\/[^\/]+)\/it\/iframe\/(\d+)/);
+                    if (mIf) fb = mIf[1] + '/it/watch/' + mIf[2];
+                    fb = fb.split('#')[0];
+                    log('fallback URL:', fb);
+                }
+                resolve(fb || '');
+            }, 3000);
         });
     }
 
@@ -675,6 +694,7 @@ function extractVideoUrl(url) {
         attachNextEpisodeInterceptor();
         try { setTimeout(__wt_applyFullscreenLayout, 200); } catch (_) {}
 
+        try { setStatus('connecting', 'Avvio…'); } catch (_) {}
         pageUrl = await resolvePageUrl();
         log('pageUrl:', pageUrl);
         log('videoUrl:', extractVideoUrl(pageUrl));
