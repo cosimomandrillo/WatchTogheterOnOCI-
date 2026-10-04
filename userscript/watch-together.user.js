@@ -1,13 +1,9 @@
 // ==UserScript==
 // @name         Watch Together
 // @namespace    watch-together
-// @match        *://vixcloud.co/*
+// @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @match        *://streamingcommunity*/*
-// @match        *://*.streamingcommunity*/*
-// @match        *://*.photography/*
-// @match        *://*.pictures/*
-// @version      5.1.4
+// @version      5.1.5
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -2141,17 +2137,13 @@ function extractVideoUrl(url) {
       setStatus('connected', room + (isOwner ? ' \u{1F451}' : ''));
       return;
     }
-    if (video.readyState < 3) {
-      log('tryPlayVideo: video non pronto (readyState=' + video.readyState + ')');
-      return;
-    }
     if (autoplayBlocked) {
       setStatus('connecting', '\u25B6 Tocca per avviare');
       showTapToStart();
       return;
     }
     autoplayAttempts++;
-    if (autoplayAttempts > 2) {
+    if (autoplayAttempts > 3) {
       autoplayBlocked = true;
       setStatus('connecting', '\u25B6 Tocca per avviare');
       showTapToStart();
@@ -2341,10 +2333,6 @@ function armUnmuteOnGesture() {
         const drift = targetTime !== null ? Math.abs(video.currentTime - targetTime) : 0;
 
         if (targetPlaying) {
-            if (video.readyState < 3) {
-                log('hb: readyState=' + video.readyState + ', skip play');
-                return;
-            }
             if (targetTime !== null && drift > THRESHOLD_TICK) {
                 lock = true;
                 try { video.currentTime = targetTime; } catch (_) {}
@@ -2366,44 +2354,11 @@ function armUnmuteOnGesture() {
             return;
         }
 
-        if (targetTime !== null && drift > THRESHOLD_TICK && video.readyState >= 2) {
+        if (targetTime !== null && drift > THRESHOLD_TICK) {
             lock = true;
             try { video.currentTime = targetTime; } catch (_) {}
             setTimeout(() => { lock = false; }, 100);
         }
-    }
-
-    // === iOS-first-tap ===
-    if (IS_IOS) {
-        let __wt_ios_tapped = false;
-        const __wt_ios_tap = function () {
-            if (__wt_ios_tapped) return;
-            __wt_ios_tapped = true;
-            document.removeEventListener('touchend', __wt_ios_tap, true);
-            document.removeEventListener('click', __wt_ios_tap, true);
-            if (!video) return;
-            if (!video.paused) return;
-            if (video.readyState < 2) return;
-            try {
-                video.muted = false;
-                const p = video.play();
-                if (p && typeof p.then === 'function') {
-                    p.then(() => {
-                        autoplayBlocked = false;
-                        autoplayAttempts = 0;
-                        log('iOS first-tap play ok');
-                        setStatus('connected', room + (isOwner ? ' \u{1F451}' : ''));
-                    }).catch(() => {
-                        try {
-                            video.muted = true;
-                            video.play().catch(() => {});
-                        } catch (_) {}
-                    });
-                }
-            } catch (_) {}
-        };
-        document.addEventListener('touchend', __wt_ios_tap, { capture: true, passive: true });
-        document.addEventListener('click', __wt_ios_tap, { capture: true });
     }
 
     function handle(m) {
