@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      5.1.5
+// @version      5.1.6
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -51,6 +51,8 @@
     // =================================================================
     const PARENT_REQ  = '__wt_get_parent_url__';
     const PARENT_RESP = '__wt_parent_url__';
+
+    var __WT_ORIGINAL_HREF = location.href;
 
     const IS_TOP = (() => {
         try { return window === window.top; } catch (_) { return false; }
@@ -203,7 +205,6 @@
     let BOOT_HASH_PERSISTENT = false;
     let BOOT_HASH_OWNER = '';
     let BOOT_HASH_AUTHOR = '';
-    var __WT_ORIGINAL_HREF = location.href;
     try {
         const _hash = location.hash.replace(/^#/, '');
         if (_hash) {
@@ -534,6 +535,7 @@ function extractVideoUrl(url) {
     let pendingNavigateFlag = false;
     let isLeader = false;
     let heartbeatTimer = null;
+    let navigatingAway = false;
     let autoplayBlocked = false;
     let autoplayAttempts = 0;
 
@@ -1903,32 +1905,6 @@ function extractVideoUrl(url) {
                     }, 3000);
                 })();
 
-                (function () {
-                    try {
-                        var m2 = location.href.match(/\/it\/iframe\/(\d+)[^?]*\?[^#]*episode_id=(\d+)/);
-                        if (!m2) return;
-                        var showId = m2[1];
-                        var epId   = m2[2];
-                        var candidate = location.origin + '/it/watch/' + showId + '?e=' + epId;
-                        var known = m.url || '';
-                        if (candidate === known) return;
-                        try {
-                            var kn = new URL(known);
-                            var ca = new URL(candidate);
-                            if (kn.pathname === ca.pathname &&
-                                kn.searchParams.get('e') === ca.searchParams.get('e')) {
-                                return;
-                            }
-                        } catch (_) {}
-                        log('sync automatico cambio episodio:', known, '->', candidate);
-                        ws.send(JSON.stringify({
-                            type: 'update-url',
-                            room: room,
-                            pass: pass,
-                            url: candidate,
-                        }));
-                    } catch (_) {}
-                })();
                 return;
             }
             if (m.type === 'you-are-leader') {
