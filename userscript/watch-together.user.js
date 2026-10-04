@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      4.9.12
+// @version      4.9.13
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -95,6 +95,16 @@
         });
     } else {
         console.log('[WT][iframe] caricato su', location.href);
+
+        if (/\/it\/iframe\/\d+/.test(location.pathname)) {
+            window.addEventListener('message', function (e) {
+                if (!e.data || !e.data.__wt_ask_ep__) return;
+                var mm = location.href.match(/\/it\/iframe\/(\d+)[^?]*\?[^#]*episode_id=(\d+)/);
+                var cand = '';
+                if (mm) cand = location.origin + '/it/watch/' + mm[1] + '?e=' + mm[2];
+                try { e.source.postMessage({ __wt_ep_result__: cand }, '*'); } catch (_) {}
+            });
+        }
 
         // Se un discendente (vixcloud, cross-origin) ci chiede di trovare
         // e navigare al prossimo episodio, facciamo il lavoro noi perche'
@@ -1704,6 +1714,44 @@ function extractVideoUrl(url) {
                 try {
                     ws.send(JSON.stringify({ type: 'sync-request', room, pass }));
                 } catch (_) {}
+
+                (function () {
+                    var done = false;
+                    var handler = function (ev) {
+                        if (!ev.data || !ev.data.__wt_ep_result__) return;
+                        if (done) return;
+                        done = true;
+                        try { window.removeEventListener('message', handler); } catch (_) {}
+                        var candidate = ev.data.__wt_ep_result__ || '';
+                        if (!candidate) return;
+                        var known = m.url || '';
+                        if (candidate === known) return;
+                        try {
+                            var kn = new URL(known, location.origin);
+                            var ca = new URL(candidate, location.origin);
+                            if (kn.pathname === ca.pathname &&
+                                kn.searchParams.get('e') === ca.searchParams.get('e')) {
+                                return;
+                            }
+                        } catch (_) {}
+                        log('sync via parent:', known, '->', candidate);
+                        try {
+                            ws.send(JSON.stringify({
+                                type: 'update-url',
+                                room: room,
+                                pass: pass,
+                                url: candidate,
+                            }));
+                        } catch (_) {}
+                    };
+                    window.addEventListener('message', handler);
+                    try { window.parent.postMessage({ __wt_ask_ep__: true }, '*'); } catch (_) {}
+                    setTimeout(function () {
+                        if (done) return;
+                        done = true;
+                        try { window.removeEventListener('message', handler); } catch (_) {}
+                    }, 3000);
+                })();
 
                 (function () {
                     try {
