@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      6.3.4
+// @version      6.3.5
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -191,7 +191,7 @@
         }
     }
 
-    // ===== WT TOP UI v6.3.4: badge stanza + chat nel frame principale =====
+    // ===== WT TOP UI v6.3.5: badge stanza + chat nel frame principale =====
     (function __wt_top_ui__() {
         if (!IS_TOP || /vixcloud/i.test(location.hostname || '')) return;
         var COL = { connected: '#22c55e', connecting: '#f59e0b', error: '#ef4444', disconnected: '#6b7280' };
@@ -243,7 +243,7 @@
             if (badge || !document.body) return;
             badge = mk('div', 'position:fixed;top:14px;right:14px;z-index:2147483647;display:flex;align-items:center;gap:9px;height:40px;padding:0 14px 0 12px;box-sizing:border-box;border-radius:20px;background:rgba(20,20,25,.98);color:#fff;border:1.5px solid rgba(255,255,255,.28);font:600 14px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;cursor:pointer;user-select:none;box-shadow:0 4px 24px rgba(0,0,0,.85);max-width:calc(100vw - 28px);overflow:hidden');
             badge.id = '__wt_top_badge__';
-            badge.title = 'Watch Together v6.3.4';
+            badge.title = 'Watch Together v6.3.5';
             dot = mk('span', 'display:inline-block;width:12px;height:12px;min-width:12px;border-radius:50%;background:#f59e0b');
             label = mk('span', 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:50vw', st.text);
             unreadEl = mk('span', 'display:none;min-width:20px;height:20px;background:#ef4444;color:#fff;border-radius:10px;font:700 11px/20px sans-serif;text-align:center;padding:0 6px');
@@ -680,7 +680,7 @@
 
     const THRESHOLD_PLAY  = 0.15;
     const THRESHOLD_PAUSE = 0.15;
-    const THRESHOLD_TICK  = 0.20;
+    const THRESHOLD_TICK  = 1.0;
     const RECONNECT_MIN   = 2000;
     const RECONNECT_MAX   = 60000;
     const LOCK_MS         = 250;
@@ -729,7 +729,7 @@
     let autoplayBlocked = false;
     let autoplayAttempts = 0;
 
-    // ===== WT BRIDGE v6.3.4: il player (iframe) parla col badge del top =====
+    // ===== WT BRIDGE v6.3.5: il player (iframe) parla col badge del top =====
     function __wt_postTop(o) {
         if (IS_TOP) return;
         try { o.__wt_ui__ = true; window.top.postMessage(o, '*'); } catch (_) {}
@@ -745,6 +745,32 @@
         var s0 = window.__wt_state__ || {};
         __wt_postTop({ k: 'state', state: s0.state || 'connecting', text: s0.text || '…', room: room || '' });
     }, 1500);
+
+    // ===== WT ANTI-ECHO v6.3.5: gli eventi causati da comandi REMOTI non vanno rimandati =====
+    let wtRemoteUntil = 0;
+    let wtSeekUntil = 0;
+    let wtRemoteTarget = null;
+    let wtHbGraceUntil = 0;
+    function __wt_markRemote(target) {
+        var now = Date.now();
+        wtRemoteUntil = now + 1500;
+        wtSeekUntil = now + 3500;
+        wtHbGraceUntil = now + 2500;
+        wtRemoteTarget = (typeof target === 'number') ? target : null;
+    }
+    function __wt_isEcho(type) {
+        var now = Date.now();
+        if (type === 'seek') {
+            if (now >= wtSeekUntil) return false;
+            return wtRemoteTarget === null || !video || Math.abs(video.currentTime - wtRemoteTarget) < 1.0;
+        }
+        return now < wtRemoteUntil;
+    }
+    function __wt_localAction() { wtHbGraceUntil = Date.now() + 2500; }
+    function handleHeartbeatBinary(hb) {
+        try { if (hb.roomHash !== wtRoomHash(room)) return; } catch (_) {}
+        handleHeartbeat({ v: hb.time, s: hb.state ? 'r' : 'p' });
+    }
 
     function pickVideo() {
         const vids = Array.from(document.querySelectorAll('video')).filter(v => v.readyState >= 1);
@@ -1022,9 +1048,9 @@
             video.setAttribute('webkit-playsinline', '');
             video.playsInline = true;
         } catch (_) {}
-        video.addEventListener('play', () => { send({ type: 'play', t: video.currentTime, author: author, clientId: clientId }); });
-        video.addEventListener('pause', () => { send({ type: 'pause', t: video.currentTime, author: author, clientId: clientId }); });
-        video.addEventListener('seeked', () => { send({ type: 'seek', t: video.currentTime, author: author, clientId: clientId }); });
+        video.addEventListener('play', () => { if (__wt_isEcho('play')) return; __wt_localAction(); send({ type: 'play', t: video.currentTime, author: author, clientId: clientId }); });
+        video.addEventListener('pause', () => { if (__wt_isEcho('pause')) return; __wt_localAction(); send({ type: 'pause', t: video.currentTime, author: author, clientId: clientId }); });
+        video.addEventListener('seeked', () => { if (__wt_isEcho('seek')) return; __wt_localAction(); send({ type: 'seek', t: video.currentTime, author: author, clientId: clientId }); });
         video.addEventListener('canplay', () => {
             if (window.__wt_pendingHb) {
                 const hb = window.__wt_pendingHb;
@@ -1364,7 +1390,7 @@
         badge.appendChild(badgeUnread);
 
         // Mostra subito qualcosa di utile nel badge (non "WT" default)
-        try { badgeLabel.textContent = 'Init v6.3.4'; } catch (_) {}
+        try { badgeLabel.textContent = 'Init v6.3.5'; } catch (_) {}
 
         onTap(badge, () => sheetOpen ? closeSheet() : openSheet());
 
@@ -2160,7 +2186,7 @@
         else if (state === 'error') { badgeDot.style.animation = 'wt-badge-pop 0.4s ease'; setTimeout(function(){ try { badgeDot.style.animation=''; } catch(_){} }, 500); }
         else badgeDot.style.animation = '';
         if (badge) badge.style.animation = (state === 'connected') ? 'wt-glow 3s ease-in-out infinite' : '';
-        badgeLabel.textContent = text + ' v6.3.4';
+        badgeLabel.textContent = text + ' v6.3.5';
         const headerDot = document.getElementById('__wt_header_dot__');
         if (headerDot) {
             headerDot.style.background = c;
@@ -2745,7 +2771,7 @@
     const HEARTBEAT_FAST_MS  = 1000;
     const HEARTBEAT_TICK_MS  = 500;
     const FAST_MODE_MS       = 10000;
-    const DRIFT_NACK_THRESH  = 0.30;
+    const DRIFT_NACK_THRESH  = 1.0;
     const NACK_RATE_LIMIT_MS = 3000;
 
     let lastHbSent = 0;
@@ -2989,6 +3015,7 @@
     // =================================================================
     function handleHeartbeat(m) {
         if (!video) return;
+        if (Date.now() < wtHbGraceUntil) return;
 
         if (video.readyState < 1) {
             window.__wt_pendingHb = m;
@@ -2998,6 +3025,7 @@
         const targetTime = (typeof m.v === 'number') ? m.v : null;
         const targetPlaying = (m.s === 'r');
         const drift = targetTime !== null ? Math.abs(video.currentTime - targetTime) : 0;
+        if (targetPlaying === video.paused || (targetTime !== null && drift > THRESHOLD_TICK)) __wt_markRemote(targetTime);
 
         // Follower: se sto driftando troppo, chiedo al leader di accelerare
         if (!isLeader && targetTime !== null && drift > DRIFT_NACK_THRESH) {
@@ -3082,7 +3110,7 @@
         if (m.type === 'presence') {
             if (m.action === 'joined') {
                 addSystemLine((m.author || '?') + ' è entrato in stanza');
-                if (connected && !lock) {
+                if (connected && isLeader && !lock) {
                     const snap = () => {
                         if (!connected) return;
                         const k = video.paused ? 'pause' : 'play';
@@ -3105,16 +3133,17 @@
 
         lock = true;
         try {
+            if (m.type === 'play' || m.type === 'pause' || m.type === 'seek') __wt_markRemote(typeof m.t === 'number' ? m.t : null);
             if (m.type === 'play') {
-                if (Math.abs(video.currentTime - m.t) > THRESHOLD_PLAY) video.currentTime = m.t;
+                if (Math.abs(video.currentTime - m.t) > 0.6) video.currentTime = m.t;
                 autoplayBlocked = false;
                 autoplayAttempts = 0;
                 tryPlayVideo();
             } else if (m.type === 'pause') {
                 video.pause();
-                if (Math.abs(video.currentTime - m.t) > THRESHOLD_PAUSE) video.currentTime = m.t;
+                if (Math.abs(video.currentTime - m.t) > 0.3) video.currentTime = m.t;
             } else if (m.type === 'seek') {
-                video.currentTime = m.t;
+                if (Math.abs(video.currentTime - m.t) > 0.25) video.currentTime = m.t;
             }
         } finally {
             setTimeout(() => { lock = false; }, LOCK_MS);
