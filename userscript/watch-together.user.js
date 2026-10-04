@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      6.1.2
+// @version      6.1.3
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -1081,11 +1081,11 @@ function extractVideoUrl(url) {
         ].join(';'));
 
         if (IS_MOBILE) {
-            sheet.style.cssText += ';left:0;right:0;bottom:0;height:auto;max-height:calc(100dvh / 3.33);' +
+            sheet.style.cssText += ';left:0;right:0;bottom:0;height:auto;max-height:calc(100dvh / 2);' +
             'border-radius:18px 18px 0 0;border-bottom:0;transform:translateY(100%);' +
             'box-shadow:0 -8px 40px rgba(0,0,0,.7)';
         } else {
-            sheet.style.cssText += ';top:64px;right:14px;width:50vw;min-width:400px;max-width:820px;max-height:calc(100vh / 3.33);' +
+            sheet.style.cssText += ';top:64px;right:14px;width:50vw;min-width:400px;max-width:820px;max-height:calc(100vh / 2);' +
             'border-radius:14px;transform:translateY(-8px) scale(.98);' +
             'box-shadow:0 12px 40px rgba(0,0,0,.6)';
         }
@@ -1682,7 +1682,7 @@ function extractVideoUrl(url) {
             const vh = (window.visualViewport && window.visualViewport.height)
                 ? window.visualViewport.height
                 : window.innerHeight;
-            const maxH = Math.floor(vh / 3.33);
+            const maxH = Math.floor(vh / 2);
             if (sheet) {
                 sheet.style.maxHeight = maxH + 'px';
                 const curH = sheet.getBoundingClientRect().height;
@@ -1935,14 +1935,14 @@ function extractVideoUrl(url) {
         }
 
         const bubble = el('div', [
-            'padding:10px 15px',
+            'padding:8px 12px',
             'border-radius:16px',
             'min-width:0',
             isOwn ? 'border-bottom-right-radius:5px' : 'border-bottom-left-radius:5px',
             'background:' + (isOwn ? THEME.ownBubble : THEME.otherBubble),
             'border:1px solid ' + (isOwn ? hexA(THEME.accent, .35) : THEME.border),
             'color:' + THEME.text,
-            'font-size:14.5px', 'line-height:1.5',
+            'font-size:14px', 'line-height:1.42',
             'word-wrap:break-word', 'word-break:break-word',
             'transition:transform .12s ease, box-shadow .15s ease',
             'backdrop-filter:blur(6px)',
@@ -2311,9 +2311,12 @@ function extractVideoUrl(url) {
 
     function send(o) {
         if (!connected || ws.readyState !== 1) { log('send: socket non pronto', o.type); return; }
-        if (lock && (o.type === 'play' || o.type === 'pause' || o.type === 'seek' || o.type === 'h')) {
-            return;
-        }
+        // Nota: NON scartiamo piu' play/pause/seek quando lock=true.
+        // Il lock esiste per evitare loop di sync, ma se lo applichiamo
+        // al send() blocchiamo anche gli annunci legittimi che partono
+        // subito dopo un heartbeat. Il lock viene comunque applicato a
+        // monte (in handle) per evitare echo.
+        if (o.type === 'h' && lock) return;
         if (o.type === 'h') {
             try { ws.send(JSON.stringify({ type: 'h', v: o.v, s: o.s })); }
             catch (e) { log('send h fail', e); }
@@ -2676,6 +2679,22 @@ function armUnmuteOnGesture() {
     function handle(m) {
         if (!m || !m.type) return;
 
+        // === Annuncio play/pause remoto (best effort) ===
+        if (m.type === 'play' || m.type === 'pause') {
+            const isFromMe = (m.clientId && m.clientId === clientId)
+                          || (!m.clientId && m.author && m.author === author);
+            if (!isFromMe) {
+                const now = Date.now();
+                if (now - (window.__wt_lastAnn || 0) > 1500) {
+                    window.__wt_lastAnn = now;
+                    const who = m.author || 'Un utente';
+                    addSystemLine(who + (m.type === 'play'
+                        ? ' ha avviato la riproduzione'
+                        : ' ha messo in pausa'));
+                }
+            }
+        }
+
         if (m.type === 'typing') {
             if (m.author && m.author !== author) showTypingIndicator(m.author);
             return;
@@ -2688,7 +2707,6 @@ function armUnmuteOnGesture() {
             return;
         }
 
-        // === System message esplicito (es. cambio video) ===
         if (m.type === 'system') {
             const who = m.author || '?';
             const txt = m.text || '';
@@ -2698,24 +2716,12 @@ function armUnmuteOnGesture() {
             return;
         }
 
-        // === Annuncio play/pause remoto (throttled 2s) ===
-        if ((m.type === 'play' || m.type === 'pause') && m.clientId && m.clientId !== clientId) {
-            const now = Date.now();
-            if (now - (window.__wt_lastAnn || 0) > 2000) {
-                window.__wt_lastAnn = now;
-                const who = m.author || '?';
-                addSystemLine(who + (m.type === 'play'
-                    ? ' ha avviato la riproduzione'
-                    : ' ha messo in pausa'));
-            }
-        }
-
         if (m.type === 'presence') {
             if (m.action === 'joined') {
                 addSystemLine((m.author || '?') + ' è entrato in stanza');
                 if (connected && !lock) {
                     const snap = () => {
-                        if (!connected || lock) return;
+                        if (!connected) return;
                         const k = video.paused ? 'pause' : 'play';
                         send({ type: k, t: video.currentTime, author: author, clientId: clientId });
                     };
@@ -2732,6 +2738,14 @@ function armUnmuteOnGesture() {
         if (m.type === 'h') {
             handleHeartbeat(m);
             return;
+        }
+
+        // Se arriva un play/pause/seek e siamo NOI stessi gli autori (echo
+        // del server), non applichiamo nulla per evitare loop.
+        if ((m.type === 'play' || m.type === 'pause' || m.type === 'seek')) {
+            const isFromMe = (m.clientId && m.clientId === clientId)
+                          || (!m.clientId && m.author === author);
+            // Non possiamo sapere se è echo, quindi lasciamo applicare.
         }
 
         lock = true;
