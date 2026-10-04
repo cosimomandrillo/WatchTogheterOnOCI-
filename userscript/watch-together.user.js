@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      6.3.0
+// @version      6.3.1
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -729,11 +729,33 @@ function extractVideoUrl(url) {
         }
     }, 500);
 
+    function __wt_sanitizeWsUrl() {
+        var PLACEHOLDER = 'YOUR' + '_SERVER_HERE';
+        if (wsUrl && wsUrl.indexOf(PLACEHOLDER) !== -1) {
+            try { localStorage.removeItem(LS.wsUrl); } catch (_) {}
+            wsUrl = DEFAULTS.wsUrl;
+        }
+        if (!wsUrl || wsUrl.indexOf(PLACEHOLDER) !== -1) {
+            return false;  // ancora placeholder — server non configurato
+        }
+        return true;
+    }
+
     function loadConfig() {
-        wsUrl  = localStorage.getItem(LS.wsUrl)  || DEFAULTS.wsUrl;
+        var PLACEHOLDER = 'YOUR' + '_SERVER_HERE';
+        var savedWs = null;
+        try { savedWs = localStorage.getItem(LS.wsUrl); } catch (_) {}
+        // Se localStorage contiene il placeholder (versione vecchia), ignoralo
+        // e usa DEFAULTS (già sostituito da nginx sub_filter).
+        if (savedWs && savedWs.indexOf(PLACEHOLDER) !== -1) {
+            try { localStorage.removeItem(LS.wsUrl); } catch (_) {}
+            savedWs = null;
+        }
+        wsUrl  = savedWs || DEFAULTS.wsUrl;
         room   = localStorage.getItem(LS.room)   || null;
         pass   = localStorage.getItem(LS.pass)   || '';
         author = localStorage.getItem(LS.author) || null;
+        try { console.log('[WT] loadConfig wsUrl=' + wsUrl); } catch (_) {}
     }
     function saveConfig() {
         localStorage.setItem(LS.wsUrl,  wsUrl);
@@ -2210,8 +2232,15 @@ function extractVideoUrl(url) {
 
     // =================================================================
     function connect() {
+        // Sanitizza SEMPRE prima di connettere: se localStorage ha un
+        // valore vecchio con placeholder, lo buttiamo via.
+        if (!__wt_sanitizeWsUrl()) {
+            setStatus('error', 'Server non configurato');
+            __wt_debug('WSURL_PLACEHOLDER wsUrl=' + wsUrl);
+            return;
+        }
         try { console.log('[WT] connect() START room=' + room + ' wsUrl=' + wsUrl); } catch (_) {}
-        try { __wt_sendDebugAdHoc('CONNECT_START room=' + room); } catch (_) {}
+        try { __wt_debug('CONNECT_START room=' + room + ' wsUrl=' + wsUrl); } catch (_) {}
         // chiudi eventuale socket precedente senza innescare riconnessione
         if (ws) {
             try {
@@ -2244,6 +2273,7 @@ function extractVideoUrl(url) {
         ws.onopen = () => {
             reconnectDelay = RECONNECT_MIN;
             try { __wt_flush_debug(); } catch (_) {}
+            try { __wt_debug('WS_OPEN url=' + wsUrl); } catch (_) {}
             const navigating = pendingNavigateFlag;
             pendingNavigateFlag = false;
             try {
@@ -2274,7 +2304,10 @@ function extractVideoUrl(url) {
             setTimeout(connect, wait);
         };
 
-        ws.onerror = (e) => { log('errore WS', e); };
+        ws.onerror = (e) => {
+            log('errore WS', e);
+            __wt_debug('WS_ERROR url=' + wsUrl);
+        };
 
         ws.onmessage = (e) => {
             // === Binary heartbeat ===
