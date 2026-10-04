@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      6.1.1
+// @version      6.1.2
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -1085,7 +1085,7 @@ function extractVideoUrl(url) {
             'border-radius:18px 18px 0 0;border-bottom:0;transform:translateY(100%);' +
             'box-shadow:0 -8px 40px rgba(0,0,0,.7)';
         } else {
-            sheet.style.cssText += ';top:64px;right:14px;width:440px;max-height:calc(100vh / 3.33);' +
+            sheet.style.cssText += ';top:64px;right:14px;width:50vw;min-width:400px;max-width:820px;max-height:calc(100vh / 3.33);' +
             'border-radius:14px;transform:translateY(-8px) scale(.98);' +
             'box-shadow:0 12px 40px rgba(0,0,0,.6)';
         }
@@ -1139,7 +1139,7 @@ function extractVideoUrl(url) {
 
         sheetList = el('div', [
             'flex:1', 'overflow-y:auto', 'padding:16px 14px',
-            'display:flex', 'flex-direction:column', 'gap:12px',
+            'display:flex', 'flex-direction:column', 'gap:14px',
             'scroll-behavior:smooth',
             '-webkit-overflow-scrolling:touch'
         ].join(';'));
@@ -1937,7 +1937,7 @@ function extractVideoUrl(url) {
         const bubble = el('div', [
             'padding:10px 15px',
             'border-radius:16px',
-            'min-width:80px',
+            'min-width:0',
             isOwn ? 'border-bottom-right-radius:5px' : 'border-bottom-left-radius:5px',
             'background:' + (isOwn ? THEME.ownBubble : THEME.otherBubble),
             'border:1px solid ' + (isOwn ? hexA(THEME.accent, .35) : THEME.border),
