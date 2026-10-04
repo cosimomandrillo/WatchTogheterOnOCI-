@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      6.2.5
+// @version      6.2.6
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -207,6 +207,7 @@
     let BOOT_HASH_AUTHOR = '';
     try {
         const _hash = location.hash.replace(/^#/, '');
+        console.log('[WT] hash raw:', JSON.stringify(_hash.slice(0, 200)));
         if (_hash) {
             const _params = new URLSearchParams(_hash);
             const _r = _params.get('wt_room');
@@ -222,7 +223,8 @@
                     if (BOOT_HASH_PASS) localStorage.setItem('wt_pass', BOOT_HASH_PASS);
                     if (BOOT_HASH_AUTHOR) localStorage.setItem('wt_author', BOOT_HASH_AUTHOR);
                 } catch (_) {}
-                console.log('[WT] hash rimosso, stanza:', _r);
+                console.log('[WT] HASH OK, stanza:', _r, 'pass:', BOOT_HASH_PASS ? '***' : '(vuota)', 'author:', BOOT_HASH_AUTHOR);
+                try { __wt_sendDebugAdHoc('HASH_OK room=' + _r); } catch (_) {}
             }
         }
     } catch (_) {}
@@ -345,8 +347,9 @@
 
     function resolvePageUrl() {
         return new Promise((resolve) => {
-            if (IS_TOP) { resolve(location.href); return; }
+            if (IS_TOP) { console.log('[WT] resolvePageUrl: TOP frame, href=' + location.href); resolve(location.href); return; }
 
+            console.log('[WT] resolvePageUrl: IFRAME, host=' + location.hostname + ' path=' + location.pathname);
             try {
                 if (window.top !== window && window.top.location.href) {
                     const topHref = window.top.location.href;

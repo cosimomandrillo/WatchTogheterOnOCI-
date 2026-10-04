@@ -1247,7 +1247,9 @@ $('joinSubmit').onclick = function(){
 
   if (!r.hasPassword){
     var f = 'wt_room=' + encodeURIComponent(r.name) + '&wt_author=' + encodeURIComponent(author);
-    location.href = r.url.split('#')[0] + '#' + f;
+    var target = r.url.split('#')[0] + '#' + f;
+    console.log('[WT-home] redirect (no password):', target);
+    location.href = target;
     return;
   }
   msg.className = 'msg warn'; msg.textContent = 'Verifica password…';
@@ -1257,7 +1259,9 @@ $('joinSubmit').onclick = function(){
                + '&wt_pass=' + encodeURIComponent(pass)
                + '&wt_author=' + encodeURIComponent(author);
       if (m.ownerToken) frag += '&wt_owner=' + encodeURIComponent(m.ownerToken);
-      location.href = r.url.split('#')[0] + '#' + frag;
+      var target = r.url.split('#')[0] + '#' + frag;
+      console.log('[WT-home] redirect (with password):', target);
+      location.href = target;
     } else {
       msg.className='msg err'; msg.textContent = m.message || 'Password errata';
       shakeModal('joinModal');
