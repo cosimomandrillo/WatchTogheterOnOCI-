@@ -777,6 +777,18 @@ async def handler(ws):
             if room is None:
                 continue
 
+            if t == "n":
+                # NACK: un follower segnala drift. Inoltra solo al leader.
+                r_obj = ROOMS.get(room)
+                if r_obj:
+                    leader = r_obj.get("leader_ws")
+                    if leader and leader is not ws:
+                        try:
+                            await leader.send(json.dumps({"type": "nack"}))
+                        except Exception:
+                            pass
+                continue
+
             if t == "h":
                 # Memorizza l'ultimo heartbeat per nuovi entranti / nuovi leader
                 try:

@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      5.1.6
+// @version      5.2.0
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -490,7 +490,6 @@ function extractVideoUrl(url) {
     const THRESHOLD_PLAY  = 0.15;
     const THRESHOLD_PAUSE = 0.15;
     const THRESHOLD_TICK  = 0.20;
-    const HEARTBEAT_MS    = 1000;
     const RECONNECT_MIN   = 2000;
     const RECONNECT_MAX   = 60000;
     const LOCK_MS         = 250;
@@ -1907,6 +1906,11 @@ function extractVideoUrl(url) {
 
                 return;
             }
+            if (m.type === 'nack') {
+                fastModeUntil = Date.now() + FAST_MODE_MS;
+                log('ricevuto NACK, fast mode per 10s');
+                return;
+            }
             if (m.type === 'you-are-leader') {
                 isLeader = true;
                 startHeartbeat();
@@ -2085,23 +2089,46 @@ function extractVideoUrl(url) {
     }
 
     // =================================================================
+    // === Adaptive heartbeat ===
+    // - 5s in idle (nessun drift rilevato)
+    // - 1s per 10s dopo un NACK da un follower
+    // - x2 se la tab non è visibile (utente non sta guardando)
+    // - play/pause/seek sempre immediati via evento
+    const HEARTBEAT_IDLE_MS  = 5000;
+    const HEARTBEAT_FAST_MS  = 1000;
+    const HEARTBEAT_TICK_MS  = 500;
+    const FAST_MODE_MS       = 10000;
+    const DRIFT_NACK_THRESH  = 0.30;
+    const NACK_RATE_LIMIT_MS = 3000;
+
+    let lastHbSent = 0;
+    let fastModeUntil = 0;
+    let lastNackSent = 0;
+
     function startHeartbeat() {
         stopHeartbeat();
-        heartbeatTimer = setInterval(() => {
-            if (!connected || !ws || ws.readyState !== 1) return;
-            if (!isLeader) return;
-            if (!video || video.readyState < 2) return;
-            try {
-                ws.send(JSON.stringify({
-                    type: 'h',
-                    v: Math.round(video.currentTime * 100) / 100,
-                    s: video.paused ? 'p' : 'r',
-                }));
-            } catch (_) {}
-        }, HEARTBEAT_MS);
+        heartbeatTimer = setInterval(heartbeatTick, HEARTBEAT_TICK_MS);
     }
     function stopHeartbeat() {
         if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+    }
+    function heartbeatTick() {
+        if (!connected || !ws || ws.readyState !== 1) return;
+        if (!isLeader) return;
+        if (!video || video.readyState < 2) return;
+        const now = Date.now();
+        const fast = now < fastModeUntil;
+        let interval = fast ? HEARTBEAT_FAST_MS : HEARTBEAT_IDLE_MS;
+        try { if (document.hidden) interval *= 2; } catch (_) {}
+        if (now - lastHbSent < interval) return;
+        lastHbSent = now;
+        try {
+            ws.send(JSON.stringify({
+                type: 'h',
+                v: Math.round(video.currentTime * 100) / 100,
+                s: video.paused ? 'p' : 'r',
+            }));
+        } catch (_) {}
     }
 
     // =================================================================
@@ -2307,6 +2334,16 @@ function armUnmuteOnGesture() {
         const targetTime = (typeof m.v === 'number') ? m.v : null;
         const targetPlaying = (m.s === 'r');
         const drift = targetTime !== null ? Math.abs(video.currentTime - targetTime) : 0;
+
+        // Follower: se sto driftando troppo, chiedo al leader di accelerare
+        if (!isLeader && targetTime !== null && drift > DRIFT_NACK_THRESH) {
+            const nowN = Date.now();
+            if (nowN - lastNackSent > NACK_RATE_LIMIT_MS) {
+                lastNackSent = nowN;
+                try { ws.send(JSON.stringify({ type: 'n' })); } catch (_) {}
+                log('NACK inviato (drift=' + drift.toFixed(2) + 's)');
+            }
+        }
 
         if (targetPlaying) {
             if (targetTime !== null && drift > THRESHOLD_TICK) {
