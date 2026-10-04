@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      6.0.2
+// @version      6.1.0
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -600,6 +600,8 @@ function extractVideoUrl(url) {
         }, null);
     }
 
+    try { setTimeout(__wt_applyFullscreenLayout, 500); } catch (_) {}
+
     log('cerco <video>…');
     const waitVideo = setInterval(() => {
         const v = pickVideo();
@@ -722,9 +724,9 @@ function extractVideoUrl(url) {
             video.setAttribute('webkit-playsinline', '');
             video.playsInline = true;
         } catch (_) {}
-        video.addEventListener('play', () => { send({ type: 'play', t: video.currentTime }); });
-        video.addEventListener('pause', () => { send({ type: 'pause', t: video.currentTime }); });
-        video.addEventListener('seeked', () => { send({ type: 'seek', t: video.currentTime }); });
+        video.addEventListener('play', () => { send({ type: 'play', t: video.currentTime, author: author }); });
+        video.addEventListener('pause', () => { send({ type: 'pause', t: video.currentTime, author: author }); });
+        video.addEventListener('seeked', () => { send({ type: 'seek', t: video.currentTime, author: author }); });
         video.addEventListener('canplay', () => {
             if (window.__wt_pendingHb) {
                 const hb = window.__wt_pendingHb;
@@ -895,6 +897,17 @@ function extractVideoUrl(url) {
                 'sul nuovo link.'
             );
             if (ok) {
+                try {
+                    if (connected && ws && ws.readyState === 1) {
+                        ws.send(JSON.stringify({
+                            type: 'system',
+                            room: room,
+                            pass: pass,
+                            author: author,
+                            text: 'ha cambiato video',
+                        }));
+                    }
+                } catch (_) {}
                 return;
             }
             e.preventDefault();
@@ -938,6 +951,21 @@ function extractVideoUrl(url) {
         }
     }
 
+    function __wt_applyFullscreenLayout() {
+        const fs = document.fullscreenElement || document.webkitFullscreenElement || null;
+        try {
+            if (fs) {
+                if (sheet) { sheet.style.top = '14px'; sheet.style.maxHeight = 'calc(100vh - 28px)'; }
+                if (badge) { badge.style.top = '14px'; }
+                if (optionsPanel) { optionsPanel.style.top = '14px'; }
+            } else {
+                if (sheet) { sheet.style.top = ''; sheet.style.maxHeight = ''; }
+                if (badge) { badge.style.top = ''; }
+                if (optionsPanel) { optionsPanel.style.top = ''; }
+            }
+        } catch (_) {}
+    }
+
     function __wt_onFullscreenChange() {
         const list = [];
         if (typeof badge !== 'undefined') list.push(badge);
@@ -945,6 +973,7 @@ function extractVideoUrl(url) {
         if (typeof optionsPanel !== 'undefined') list.push(optionsPanel);
         if (typeof roomPickerEl !== 'undefined') list.push(roomPickerEl);
         list.forEach(function (el) { __wt_appendToCorrectParent(el); });
+        __wt_applyFullscreenLayout();
         const fs = document.fullscreenElement || document.webkitFullscreenElement || null;
         log('fullscreenchange, target=' + (fs ? fs.tagName + '.' + (fs.className || '').slice(0,40) : 'none'));
     }
@@ -1854,7 +1883,7 @@ function extractVideoUrl(url) {
         const col = el('div', [
             'display:flex', 'flex-direction:column',
             isOwn ? 'align-items:flex-end' : 'align-items:flex-start',
-            'max-width:85%', 'min-width:0', 'flex:0 1 auto'
+            'max-width:85%'
         ].join(';'));
 
         if (!isOwn) {
@@ -1870,7 +1899,7 @@ function extractVideoUrl(url) {
         const bubble = el('div', [
             'padding:10px 15px',
             'border-radius:16px',
-            'min-width:52px',
+            'min-width:80px',
             isOwn ? 'border-bottom-right-radius:5px' : 'border-bottom-left-radius:5px',
             'background:' + (isOwn ? THEME.ownBubble : THEME.otherBubble),
             'border:1px solid ' + (isOwn ? hexA(THEME.accent, .35) : THEME.border),
@@ -2618,6 +2647,23 @@ function armUnmuteOnGesture() {
             const isOwn = (m.clientId && m.clientId === clientId)
             || (!m.clientId && m.author === author);
             addChatLine(m.author || '?', m.text || '', isOwn);
+            return;
+        }
+
+        // System messages play/pause (solo se da author remoto)
+        if ((m.type === 'play' || m.type === 'pause') && m.author && m.author !== author) {
+            const nowAnn = Date.now();
+            if (nowAnn - (window.__wt_lastAnn || 0) > 2000) {
+                window.__wt_lastAnn = nowAnn;
+                const txt = m.type === 'play'
+                    ? m.author + ' ha avviato la riproduzione'
+                    : m.author + ' ha messo in pausa';
+                addSystemLine(txt);
+            }
+        }
+
+        if (m.type === 'system') {
+            addSystemLine((m.author || '?') + ' ' + (m.text || ''));
             return;
         }
 

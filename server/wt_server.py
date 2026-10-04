@@ -951,6 +951,23 @@ async def handler(ws):
                 )
                 continue
 
+            if t == "system":
+                text = sanitize_chat(msg.get("text"))
+                if not text:
+                    continue
+                author_msg = (msg.get("author") or "?")[:32]
+                entry = {
+                    "type": "system",
+                    "author": author_msg,
+                    "text": text,
+                    "ts": time.time(),
+                }
+                await asyncio.gather(
+                    *(p.send(json.dumps(entry)) for p in tuple(peers)),
+                    return_exceptions=True,
+                )
+                continue
+
             if t == "typing":
                 await asyncio.gather(
                     *(p.send(raw) for p in tuple(peers) if p is not ws),
