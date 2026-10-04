@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      6.1.0
+// @version      6.1.1
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -724,9 +724,9 @@ function extractVideoUrl(url) {
             video.setAttribute('webkit-playsinline', '');
             video.playsInline = true;
         } catch (_) {}
-        video.addEventListener('play', () => { send({ type: 'play', t: video.currentTime, author: author }); });
-        video.addEventListener('pause', () => { send({ type: 'pause', t: video.currentTime, author: author }); });
-        video.addEventListener('seeked', () => { send({ type: 'seek', t: video.currentTime, author: author }); });
+        video.addEventListener('play', () => { send({ type: 'play', t: video.currentTime, author: author, clientId: clientId }); });
+        video.addEventListener('pause', () => { send({ type: 'pause', t: video.currentTime, author: author, clientId: clientId }); });
+        video.addEventListener('seeked', () => { send({ type: 'seek', t: video.currentTime, author: author, clientId: clientId }); });
         video.addEventListener('canplay', () => {
             if (window.__wt_pendingHb) {
                 const hb = window.__wt_pendingHb;
@@ -952,6 +952,7 @@ function extractVideoUrl(url) {
     }
 
     function __wt_applyFullscreenLayout() {
+        try { __wt_clampSheetHeight(); } catch (_) {}
         const fs = document.fullscreenElement || document.webkitFullscreenElement || null;
         try {
             if (fs) {
@@ -967,14 +968,32 @@ function extractVideoUrl(url) {
     }
 
     function __wt_onFullscreenChange() {
+        const fs = document.fullscreenElement || document.webkitFullscreenElement || null;
         const list = [];
         if (typeof badge !== 'undefined') list.push(badge);
         if (typeof sheet !== 'undefined') list.push(sheet);
         if (typeof optionsPanel !== 'undefined') list.push(optionsPanel);
         if (typeof roomPickerEl !== 'undefined') list.push(roomPickerEl);
-        list.forEach(function (el) { __wt_appendToCorrectParent(el); });
+
+        if (fs) {
+            // Entrando in fullscreen: sposta gli elementi nel fullscreen element
+            list.forEach(function (el) {
+                if (el && el.parentNode !== fs) {
+                    try { fs.appendChild(el); } catch (_) {}
+                }
+            });
+        } else {
+            // Uscendo: FORZA il re-append a body (il browser può aver
+            // rimosso gli elementi quando il fullscreen element è stato
+            // distrutto, facendoli sparire).
+            list.forEach(function (el) {
+                if (el && el.parentNode !== document.body) {
+                    try { document.body.appendChild(el); } catch (_) {}
+                }
+            });
+        }
         __wt_applyFullscreenLayout();
-        const fs = document.fullscreenElement || document.webkitFullscreenElement || null;
+        try { __wt_clampSheetHeight(); } catch (_) {}
         log('fullscreenchange, target=' + (fs ? fs.tagName + '.' + (fs.className || '').slice(0,40) : 'none'));
     }
 
@@ -1062,11 +1081,11 @@ function extractVideoUrl(url) {
         ].join(';'));
 
         if (IS_MOBILE) {
-            sheet.style.cssText += ';left:0;right:0;bottom:0;height:60dvh;max-height:60dvh;' +
+            sheet.style.cssText += ';left:0;right:0;bottom:0;height:auto;max-height:calc(100dvh / 3.33);' +
             'border-radius:18px 18px 0 0;border-bottom:0;transform:translateY(100%);' +
             'box-shadow:0 -8px 40px rgba(0,0,0,.7)';
         } else {
-            sheet.style.cssText += ';top:64px;right:14px;width:440px;max-height:640px;' +
+            sheet.style.cssText += ';top:64px;right:14px;width:440px;max-height:calc(100vh / 3.33);' +
             'border-radius:14px;transform:translateY(-8px) scale(.98);' +
             'box-shadow:0 12px 40px rgba(0,0,0,.6)';
         }
@@ -1658,6 +1677,23 @@ function extractVideoUrl(url) {
     // bottom:0 resta nascosto sotto la tastiera. Usiamo l'API
     // visualViewport per riposizionare la sheet sopra la tastiera.
     // =============================================================
+    function __wt_clampSheetHeight() {
+        try {
+            const vh = (window.visualViewport && window.visualViewport.height)
+                ? window.visualViewport.height
+                : window.innerHeight;
+            const maxH = Math.floor(vh / 3.33);
+            if (sheet) {
+                sheet.style.maxHeight = maxH + 'px';
+                const curH = sheet.getBoundingClientRect().height;
+                if (curH > maxH) sheet.style.height = maxH + 'px';
+            }
+            if (optionsPanel) {
+                optionsPanel.style.maxHeight = maxH + 'px';
+            }
+        } catch (_) {}
+    }
+
     function __wt_updateSheetPos() {
         if (!sheet || !IS_MOBILE || !sheetOpen) return;
         const vv = window.visualViewport;
@@ -1706,6 +1742,8 @@ function extractVideoUrl(url) {
         try { __wt_appendToCorrectParent(sheet); } catch (_) {}
         sheet.style.display = 'flex';
         try { __wt_updateSheetPos(); } catch (_) {}
+        try { __wt_clampSheetHeight(); } catch (_) {}
+        setTimeout(function () { try { __wt_clampSheetHeight(); } catch (_) {} }, 60);
         requestAnimationFrame(() => {
             if (IS_MOBILE) sheet.style.transform = 'translateY(0)';
             else { sheet.style.transform = 'translateY(0) scale(1)'; sheet.style.opacity = '1'; }
@@ -2650,33 +2688,36 @@ function armUnmuteOnGesture() {
             return;
         }
 
-        // System messages play/pause (solo se da author remoto)
-        if ((m.type === 'play' || m.type === 'pause') && m.author && m.author !== author) {
-            const nowAnn = Date.now();
-            if (nowAnn - (window.__wt_lastAnn || 0) > 2000) {
-                window.__wt_lastAnn = nowAnn;
-                const txt = m.type === 'play'
-                    ? m.author + ' ha avviato la riproduzione'
-                    : m.author + ' ha messo in pausa';
-                addSystemLine(txt);
-            }
+        // === System message esplicito (es. cambio video) ===
+        if (m.type === 'system') {
+            const who = m.author || '?';
+            const txt = m.text || '';
+            const isOwnMsg = (m.clientId && m.clientId === clientId)
+                          || (!m.clientId && who === author);
+            addSystemLine((isOwnMsg ? 'Tu ' : (who + ' ')) + txt);
+            return;
         }
 
-        if (m.type === 'system') {
-            addSystemLine((m.author || '?') + ' ' + (m.text || ''));
-            return;
+        // === Annuncio play/pause remoto (throttled 2s) ===
+        if ((m.type === 'play' || m.type === 'pause') && m.clientId && m.clientId !== clientId) {
+            const now = Date.now();
+            if (now - (window.__wt_lastAnn || 0) > 2000) {
+                window.__wt_lastAnn = now;
+                const who = m.author || '?';
+                addSystemLine(who + (m.type === 'play'
+                    ? ' ha avviato la riproduzione'
+                    : ' ha messo in pausa'));
+            }
         }
 
         if (m.type === 'presence') {
             if (m.action === 'joined') {
                 addSystemLine((m.author || '?') + ' è entrato in stanza');
-                // Manda lo stato ATTUALE (play/pause + currentTime) al nuovo peer
-                // 3 volte per sicurezza, così si posiziona al secondo corrente.
                 if (connected && !lock) {
                     const snap = () => {
                         if (!connected || lock) return;
                         const k = video.paused ? 'pause' : 'play';
-                        send({ type: k, t: video.currentTime });
+                        send({ type: k, t: video.currentTime, author: author, clientId: clientId });
                     };
                     setTimeout(snap, 100);
                     setTimeout(snap, 700);
@@ -2689,8 +2730,6 @@ function armUnmuteOnGesture() {
         }
 
         if (m.type === 'h') {
-            // Heartbeat del leader: garantisce stato play/pausa identico
-            // e tempo allineato entro THRESHOLD_TICK.
             handleHeartbeat(m);
             return;
         }
