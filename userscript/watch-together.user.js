@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      6.2.7
+// @version      6.2.8
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -659,6 +659,23 @@ function extractVideoUrl(url) {
         }, 8000);
     })();
 
+    // Loop che tiene il badge SINCRONIZZATO con __wt_state__ (che sia
+    // settato da setStatus o da codice esterno).
+    (function __wt_badge_updater_loop__() {
+        setInterval(function () {
+            try {
+                var b = document.getElementById('__wt_badge__');
+                if (!b) return;
+                var lbl = b.querySelector('span:nth-child(2)');
+                if (!lbl) return;
+                var st = window.__wt_state__;
+                if (st && st.text) {
+                    if (lbl.textContent !== st.text) lbl.textContent = st.text;
+                }
+            } catch (_) {}
+        }, 500);
+    })();
+
     log('cerco <video>…');
     const waitVideo = setInterval(() => {
         const v = pickVideo();
@@ -777,8 +794,19 @@ function extractVideoUrl(url) {
             saveConfig();
             setStatus('connecting', 'Stanza: ' + room);
             try { __wt_sendDebugAdHoc('HASHROOM_USED room=' + room + ' author=' + String(author)); } catch (_) {}
-            if (!author) askAuthor(() => connect());
-            else connect();
+            var __safeConnect = function () {
+                try {
+                    console.log('[WT] safeConnect called');
+                    try { __wt_sendDebugAdHoc('SAFECONNECT_CALLED room=' + room); } catch (_) {}
+                    connect();
+                } catch (e) {
+                    console.error('[WT] connect threw:', e);
+                    try { __wt_sendDebugAdHoc('CONNECT_THREW ' + (e && e.message || e)); } catch (_) {}
+                    try { setStatus('error', 'Errore: ' + (e && e.message || e)); } catch (_) {}
+                }
+            };
+            if (!author) askAuthor(__safeConnect);
+            else __safeConnect();
             return;
         }
 
@@ -2143,6 +2171,8 @@ function extractVideoUrl(url) {
 
     // =================================================================
     function connect() {
+        try { console.log('[WT] connect() START room=' + room + ' wsUrl=' + wsUrl); } catch (_) {}
+        try { __wt_sendDebugAdHoc('CONNECT_START room=' + room); } catch (_) {}
         // chiudi eventuale socket precedente senza innescare riconnessione
         if (ws) {
             try {
@@ -2161,6 +2191,8 @@ function extractVideoUrl(url) {
         log('connect: room=' + room + ' autoReconnect=' + autoReconnect + ' create=' + (!autoReconnect));
         log('connessione a', wsUrl, 'stanza:', room, 'url:', videoUrl);
 
+        try { console.log('[WT] connect videoUrl=' + videoUrl + ' canonical=' + canonical); } catch (_) {}
+        try { __wt_sendDebugAdHoc('CONNECT_URL room=' + room + ' videoUrl=' + (videoUrl||'(empty)')); } catch (_) {}
         if (!videoUrl) {
             setStatus('error', 'URL video non trovato');
             return;
