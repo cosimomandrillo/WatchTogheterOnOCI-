@@ -267,6 +267,11 @@
     0%,100%{box-shadow:0 0 0 0 rgba(16,217,122,.55)}
     50%{box-shadow:0 0 0 8px rgba(16,217,122,0)}
   }
+  .room .avatar.has-image::after{
+    content:"";position:absolute;inset:0;border-radius:inherit;
+    background:linear-gradient(135deg, rgba(0,0,0,.35), rgba(0,0,0,0) 60%);
+    pointer-events:none;
+  }
   .room .avatar.has-image{
     background-size:cover;background-position:center;
     color:transparent;text-shadow:none;
@@ -284,6 +289,19 @@
     font-size:12px;color:var(--dim);margin-top:6px;
   }
   .room .meta .sep{color:var(--dim2);opacity:.5}
+  .room .live-pill{
+    display:inline-flex;align-items:center;gap:5px;
+    padding:2px 9px;border-radius:99px;
+    background:linear-gradient(135deg, rgba(16,217,122,.22), rgba(16,217,122,.08));
+    border:1px solid rgba(16,217,122,.35);
+    color:#a7f3d0;font-size:11px;font-weight:800;letter-spacing:.02em
+  }
+  .room .live-pill::before{
+    content:"";width:6px;height:6px;border-radius:50%;background:var(--accent);
+    box-shadow:0 0 8px rgba(16,217,122,.8);
+    animation:livePulse 1.6s ease-in-out infinite
+  }
+  @keyframes livePulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.75)}}
   .room .meta .url{
     color:var(--blue);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
     font-size:11.5px;padding:2px 9px;border-radius:7px;
@@ -959,9 +977,16 @@ function updateRoomRow(row, r){
     var wanted_txt = parts.join(' \u00b7 ');
     if (meta.textContent !== wanted_txt){
       meta.innerHTML = '';
-      var s1 = document.createElement('span');
-      s1.textContent = parts[0];
-      meta.appendChild(s1);
+      if (r.clients > 0){
+        var pill = document.createElement('span');
+        pill.className = 'live-pill';
+        pill.textContent = r.clients + (r.clients === 1 ? ' online' : ' online');
+        meta.appendChild(pill);
+      } else {
+        var s1 = document.createElement('span');
+        s1.textContent = parts[0];
+        meta.appendChild(s1);
+      }
       if (r.title){
         meta.appendChild(makeSep());
         var t = document.createElement('span');

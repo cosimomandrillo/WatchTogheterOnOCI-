@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      4.9.13
+// @version      5.0.0
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -99,9 +99,11 @@
         if (/\/it\/iframe\/\d+/.test(location.pathname)) {
             window.addEventListener('message', function (e) {
                 if (!e.data || !e.data.__wt_ask_ep__) return;
-                var mm = location.href.match(/\/it\/iframe\/(\d+)[^?]*\?[^#]*episode_id=(\d+)/);
+                // Siamo same-origin col top: leggiamo l'URL reale, niente
+                // ricostruzione ambigua da episode_id (evita ep1<->ep2 mismatch).
                 var cand = '';
-                if (mm) cand = location.origin + '/it/watch/' + mm[1] + '?e=' + mm[2];
+                try { cand = window.top.location.href; } catch (_) { cand = location.href; }
+                try { cand = cand.split('#')[0]; } catch (_) {}
                 try { e.source.postMessage({ __wt_ep_result__: cand }, '*'); } catch (_) {}
             });
         }
@@ -1570,28 +1572,93 @@ function extractVideoUrl(url) {
     }
 
     // =================================================================
+    function _avatarColor(name) {
+        let h = 0;
+        const s = String(name || '?');
+        for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+        return Math.abs(h) % 360;
+    }
+    function _initials(name) {
+        const c = String(name || '?').trim();
+        if (!c) return '?';
+        const p = c.split(/[\s_-]+/).filter(Boolean);
+        if (p.length >= 2) return (p[0][0] + p[1][0]).toUpperCase();
+        return c.slice(0, 2).toUpperCase();
+    }
+
     function addChatLine(authorName, text, isOwn) {
         const row = el('div', [
-            'display:flex', 'flex-direction:column',
-            isOwn ? 'align-items:flex-end' : 'align-items:flex-start',
-            'animation:wt-slide-in .2s ease', 'width:100%'
+            'display:flex', 'gap:9px',
+            isOwn ? 'flex-direction:row-reverse' : 'flex-direction:row',
+            'align-items:flex-end', 'width:100%',
+            'animation:wt-slide-in .25s cubic-bezier(.2,.9,.3,1.3)',
+            'margin-bottom:2px'
         ].join(';'));
 
-        const meta = el('div', 'font-size:10.5px;color:' + THEME.textMuted + ';margin:0 6px 4px;font-weight:500',
-                        (isOwn ? 'Tu' : authorName) + ' · ' +
-                        new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-        row.appendChild(meta);
+        // Avatar con iniziali + colore deterministico
+        const hue = _avatarColor(authorName);
+        const av = el('div', [
+            'flex-shrink:0',
+            'width:30px', 'height:30px',
+            'min-width:30px', 'min-height:30px',
+            'border-radius:50%',
+            'background:linear-gradient(135deg, hsl(' + hue + ',70%,62%), hsl(' + ((hue+40)%360) + ',75%,55%))',
+            'color:#0a0a10',
+            'font:800 12px -apple-system,sans-serif',
+            'display:flex', 'align-items:center', 'justify-content:center',
+            'box-shadow:0 3px 8px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.28)',
+            'letter-spacing:-.3px',
+            'transition:transform .15s ease'
+        ].join(';'), _initials(isOwn ? (author || 'Tu') : authorName));
+        if (isOwn) av.style.opacity = '0.55';
+        row.appendChild(av);
+
+        const col = el('div', [
+            'display:flex', 'flex-direction:column',
+            isOwn ? 'align-items:flex-end' : 'align-items:flex-start',
+            'max-width:80%', 'min-width:0'
+        ].join(';'));
+
+        if (!isOwn) {
+            const nm = el('div', [
+                'font-size:11px', 'font-weight:700',
+                'color:hsl(' + hue + ',70%,68%)',
+                'margin:0 6px 3px',
+                'letter-spacing:.2px'
+            ].join(';'), authorName);
+            col.appendChild(nm);
+        }
 
         const bubble = el('div', [
-            'max-width:78%', 'padding:9px 13px', 'border-radius:16px',
-            isOwn ? 'border-bottom-right-radius:4px' : 'border-bottom-left-radius:4px',
+            'padding:9px 13px',
+            'border-radius:16px',
+            isOwn ? 'border-bottom-right-radius:5px' : 'border-bottom-left-radius:5px',
             'background:' + (isOwn ? THEME.ownBubble : THEME.otherBubble),
-                          'border:1px solid ' + (isOwn ? hexA(THEME.accent, .35) : THEME.border),
-                          'color:' + THEME.text, 'font-size:14px', 'line-height:1.4',
-                          'word-wrap:break-word', 'word-break:break-word'
+            'border:1px solid ' + (isOwn ? hexA(THEME.accent, .35) : THEME.border),
+            'color:' + THEME.text,
+            'font-size:14px', 'line-height:1.45',
+            'word-wrap:break-word', 'word-break:break-word',
+            'transition:transform .12s ease, box-shadow .15s ease',
+            'backdrop-filter:blur(6px)',
+            '-webkit-backdrop-filter:blur(6px)'
         ].join(';'), text);
-        row.appendChild(bubble);
+        bubble.addEventListener('mouseenter', () => {
+            bubble.style.transform = 'translateY(-1px)';
+            bubble.style.boxShadow = '0 6px 16px rgba(0,0,0,.3)';
+        });
+        bubble.addEventListener('mouseleave', () => {
+            bubble.style.transform = '';
+            bubble.style.boxShadow = '';
+        });
+        col.appendChild(bubble);
 
+        const ts = el('div', [
+            'font-size:9.5px', 'color:' + THEME.textMuted,
+            'margin:2px 6px 4px', 'opacity:.75'
+        ].join(';'), new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+        col.appendChild(ts);
+
+        row.appendChild(col);
         sheetList.appendChild(row);
         sheetList.scrollTop = sheetList.scrollHeight;
         if (!isOwn && !sheetOpen) { unread++; updateUnread(); }
@@ -1964,49 +2031,82 @@ function extractVideoUrl(url) {
     //                  AUTOPLAY CON GESTO UTENTE
     // =================================================================
     function tryPlayVideo() {
+    if (!video) return;
+    if (!video.paused) {
+      setStatus('connected', room + (isOwner ? ' \u{1F451}' : ''));
+      return;
+    }
     const wasMuted = video.muted;
+    // 1) Tentativo con audio
     const p = video.play();
     if (!p || typeof p.then !== 'function') return;
     p.then(() => {
-      log('play() ok');
       setStatus('connected', room + (isOwner ? ' \u{1F451}' : ''));
-    }).catch((err) => {
-      log('play() bloccato:', err && err.name);
+    }).catch(() => {
+      // 2) Forza muted (autoplay policy)
       video.muted = true;
       const p2 = video.play();
       if (!p2 || typeof p2.then !== 'function') return;
       p2.then(() => {
-        log('play() muted ok');
-        if (wasMuted) {
-          setStatus('connected', room + (isOwner ? '\u{1F451}' : ''));
-          return;
-        }
-
-        // Tentativo AUTOMATICO di unmute (funziona su desktop e su iOS
-        // se il browser ha già un gesto utente in questa sessione)
+        if (wasMuted) return;
+        // 3) Prova unmute dopo 200ms (funziona se il browser ha gesture)
         setTimeout(() => {
           video.muted = false;
           const p3 = video.play();
           if (p3 && typeof p3.then === 'function') {
-            p3.then(() => {
-              log('unmute automatico ok');
-              setStatus('connected', room + (isOwner ? '\u{1F451}' : ''));
-            }).catch((err3) => {
-              log('unmute automatico bloccato:', err3 && err3.name);
+            p3.catch(() => {
               video.muted = true;
               setStatus('connected', '\u{1F507} Tocca per audio');
               armUnmuteOnGesture();
             });
           }
-        }, 150);
-      }).catch((err2) => {
-        log('play() muted bloccato:', err2 && err2.name);
+        }, 200);
+      }).catch(() => {
+        // 4) Anche muto fallisce: pulsante "Tocca per avviare"
         video.muted = wasMuted;
         pendingPlayTarget = video.currentTime;
-        setStatus('connecting', 'Tocca per avviare');
-        armAutoPlayOnGesture();
+        setStatus('connecting', '\u25B6 Tocca per avviare');
+        showTapToStart();
       });
     });
+  }
+
+  function showTapToStart() {
+    if (document.getElementById('__wt_tap_start__')) return;
+    const btn = document.createElement('button');
+    btn.id = '__wt_tap_start__';
+    btn.textContent = '\u25B6 Tocca per sincronizzare';
+    btn.style.cssText = [
+      'position:fixed', 'left:50%', 'top:50%',
+      'transform:translate(-50%,-50%)',
+      'z-index:2147483647',
+      'background:linear-gradient(135deg,#22c55e,#16a34a)',
+      'color:#fff', 'border:0',
+      'padding:16px 28px', 'border-radius:999px',
+      'font:700 15px -apple-system,sans-serif',
+      'cursor:pointer',
+      'box-shadow:0 10px 40px rgba(34,197,94,.55), 0 0 0 4px rgba(34,197,94,.2)',
+      'animation:wt-pulse-btn 1.6s ease-in-out infinite',
+      '-webkit-tap-highlight-color:transparent',
+    ].join(';');
+    btn.onclick = () => {
+      try { btn.remove(); } catch (_) {}
+      try { video.muted = false; } catch (_) {}
+      const p = video.play();
+      if (p && typeof p.then === 'function') {
+        p.then(() => setStatus('connected', room + (isOwner ? ' \u{1F451}' : '')))
+         .catch(() => { try { video.muted = true; } catch(_){} video.play(); });
+      }
+    };
+    document.body.appendChild(btn);
+    // Rimuovilo automaticamente se il video parte
+    const iv = setInterval(() => {
+      if (!video || !video.paused) {
+        try { btn.remove(); } catch (_) {}
+        clearInterval(iv);
+      }
+    }, 500);
+    setTimeout(() => { try { btn.remove(); } catch (_) {} clearInterval(iv); }, 15000);
   }
 
 function armAutoPlayOnGesture() {
@@ -2150,6 +2250,10 @@ function armUnmuteOnGesture() {
     @keyframes wt-slide-in {
         from { opacity: 0; transform: translateY(6px); }
         to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes wt-pulse-btn {
+        0%,100% { transform:translate(-50%,-50%) scale(1); box-shadow:0 10px 40px rgba(34,197,94,.55), 0 0 0 4px rgba(34,197,94,.2); }
+        50%     { transform:translate(-50%,-50%) scale(1.05); box-shadow:0 14px 50px rgba(34,197,94,.75), 0 0 0 10px rgba(34,197,94,.08); }
     }
     `;
     (document.head || document.documentElement).appendChild(styleTag);
