@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      4.9.10
+// @version      4.9.11
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -95,6 +95,32 @@
         });
     } else {
         console.log('[WT][iframe] caricato su', location.href);
+
+        // Se un discendente (vixcloud, cross-origin) ci chiede di trovare
+        // e navigare al prossimo episodio, facciamo il lavoro noi perche'
+        // siamo same-origin col TOP (/it/iframe/61 <-> /it/watch/61).
+        window.addEventListener('message', function (e) {
+            if (!e.data || !e.data.__wt_goto_next__) return;
+            let topUrl = '';
+            try { topUrl = window.top.location.href; } catch (_) { topUrl = location.href; }
+            let nextUrl = '';
+            try { nextUrl = __wt_scanDocForNext(window.top.document, topUrl); } catch (_) {}
+            if (!nextUrl) {
+                try { nextUrl = __wt_scanDocForNext(document, location.href); } catch (_) {}
+            }
+            console.log('[WT][sc-iframe] goto_next richiesto, trovato:', nextUrl);
+            try {
+                e.source.postMessage({ __wt_goto_next_result__: true, url: nextUrl || '' }, '*');
+            } catch (_) {}
+            if (nextUrl) {
+                setTimeout(function () {
+                    try { window.top.location.href = nextUrl; }
+                    catch (_) {
+                        try { window.location.href = nextUrl; } catch (__) {}
+                    }
+                }, 200);
+            }
+        });
     }
 
     function __wt_findNextEpisodeInDom() {
@@ -766,18 +792,7 @@ function extractVideoUrl(url) {
             );
             if (!ok) return;
 
-            const nextUrl = __wt_findNextEpisodeOnPage();
-            if (!nextUrl) {
-                log('next-episode: link non trovato nei documenti accessibili');
-                alert('Non riesco a trovare il link del prossimo episodio.\n\n' +
-                      'Apri la lista episodi sotto al player e riprova, oppure ' +
-                      'naviga manualmente e la stanza si aggiornerà da sola.');
-                return;
-            }
-
-            log('next-episode:', nextUrl);
-
-            // Manda update-url al server (il server broadcasta navigate)
+            // Raccolta dati stanza (per hello ad-hoc se non siamo connessi)
             let roomName = '', roomPass = '', authorName = '';
             try {
                 roomName   = localStorage.getItem('wt_room')   || '';
@@ -785,62 +800,91 @@ function extractVideoUrl(url) {
                 authorName = localStorage.getItem('wt_author') || '?';
             } catch (_) {}
 
-            if (typeof connected !== 'undefined' && connected && ws && ws.readyState === 1 && room) {
-                try {
-                    ws.send(JSON.stringify({
-                        type: 'update-url',
-                        room: room,
-                        pass: pass,
-                        url: nextUrl,
-                    }));
-                } catch (_) {}
-            } else if (roomName && DEFAULTS.wsUrl && !DEFAULTS.wsUrl.includes('YOUR')) {
-                try {
-                    const sock = new WebSocket(DEFAULTS.wsUrl);
-                    sock.onopen = function () {
-                        try {
-                            sock.send(JSON.stringify({
-                                type: 'hello',
-                                room: roomName,
-                                pass: roomPass,
-                                author: authorName,
-                                persistent: false,
-                                create: false,
-                                ownerToken: '',
-                                url: nextUrl,
-                                navigating: true,
-                            }));
-                        } catch (_) {}
-                        setTimeout(function () { try { sock.close(); } catch(_) {} }, 900);
-                    };
-                    sock.onerror = function () { try { sock.close(); } catch(_) {} };
-                } catch (_) {}
-            }
-
-            // Naviga il TOP: se same-origin, accesso diretto
-            const goTop = function () {
-                try {
-                    if (window.top !== window) {
-                        window.top.location.href = nextUrl;
-                        return true;
-                    }
-                } catch (_) {}
-                return false;
+            const notifyServer = function (url) {
+                if (typeof connected !== 'undefined' && connected && ws && ws.readyState === 1 && room) {
+                    try {
+                        ws.send(JSON.stringify({
+                            type: 'update-url',
+                            room: room, pass: pass, url: url,
+                        }));
+                    } catch (_) {}
+                } else if (roomName && DEFAULTS.wsUrl && !DEFAULTS.wsUrl.includes('YOUR')) {
+                    try {
+                        const sock = new WebSocket(DEFAULTS.wsUrl);
+                        sock.onopen = function () {
+                            try {
+                                sock.send(JSON.stringify({
+                                    type: 'hello',
+                                    room: roomName, pass: roomPass,
+                                    author: authorName,
+                                    persistent: false, create: false,
+                                    ownerToken: '',
+                                    url: url, navigating: true,
+                                }));
+                            } catch (_) {}
+                            setTimeout(function () { try { sock.close(); } catch(_) {} }, 900);
+                        };
+                        sock.onerror = function () { try { sock.close(); } catch(_) {} };
+                    } catch (_) {}
+                }
             };
+
+            const go = function (nextUrl) {
+                log('next-episode:', nextUrl);
+                notifyServer(nextUrl);
+                setTimeout(function () {
+                    try {
+                        if (window.top !== window) {
+                            window.top.location.href = nextUrl;
+                            return;
+                        }
+                    } catch (_) {}
+                    try {
+                        const a = document.createElement('a');
+                        a.href = nextUrl;
+                        a.target = '_top';
+                        a.rel = 'noopener';
+                        a.style.display = 'none';
+                        (document.body || document.documentElement).appendChild(a);
+                        a.click();
+                        setTimeout(function(){ try { a.remove(); } catch(_){} }, 200);
+                    } catch (_) {}
+                }, 200);
+            };
+
+            // 1) Prova in locale (siamo same-origin col top?)
+            let localUrl = '';
+            try { localUrl = __wt_scanDocForNext(window.top.document, window.top.location.href); } catch (_) {}
+            if (!localUrl) {
+                try { localUrl = __wt_scanDocForNext(document, location.href); } catch (_) {}
+            }
+            if (localUrl) { go(localUrl); return; }
+
+            // 2) Delega al parent SC (same-origin col top, cross-origin per noi)
+            log('next-episode: chiedo al parent');
+            let done = false;
+            const handler = function (ev) {
+                if (!ev.data || !ev.data.__wt_goto_next_result__) return;
+                if (done) return;
+                done = true;
+                try { window.removeEventListener('message', handler); } catch (_) {}
+                if (ev.data.url) {
+                    log('parent ha trovato:', ev.data.url);
+                    notifyServer(ev.data.url);
+                } else {
+                    alert('Non riesco a trovare il link del prossimo episodio.\n\n' +
+                          'Apri la lista episodi sotto al player e riprova.');
+                }
+            };
+            window.addEventListener('message', handler);
+            try { window.parent.postMessage({ __wt_goto_next__: true }, '*'); } catch (_) {}
             setTimeout(function () {
-                if (goTop()) return;
-                // fallback: anchor target=_top (cross-origin)
-                try {
-                    const a = document.createElement('a');
-                    a.href = nextUrl;
-                    a.target = '_top';
-                    a.rel = 'noopener';
-                    a.style.display = 'none';
-                    (document.body || document.documentElement).appendChild(a);
-                    a.click();
-                    setTimeout(function(){ try { a.remove(); } catch(_){} }, 200);
-                } catch (_) {}
-            }, 250);
+                if (done) return;
+                done = true;
+                try { window.removeEventListener('message', handler); } catch (_) {}
+                alert('Timeout: il parent non ha risposto.\n\n' +
+                      'Naviga manualmente, la stanza si aggiorna da sola.');
+            }, 3000);
         }, true);
     }
 
