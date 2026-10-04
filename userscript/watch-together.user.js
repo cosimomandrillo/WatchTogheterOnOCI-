@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      6.3.5
+// @version      6.4.0
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -191,85 +191,186 @@
         }
     }
 
-    // ===== WT TOP UI v6.3.5: badge stanza + chat nel frame principale =====
+    // ===== WT TOP UI v6.4.0: badge stanza + chat premium nel frame principale =====
     (function __wt_top_ui__() {
         if (!IS_TOP || /vixcloud/i.test(location.hostname || '')) return;
         var COL = { connected: '#22c55e', connecting: '#f59e0b', error: '#ef4444', disconnected: '#6b7280' };
         var st = { state: 'connecting', text: 'WT: attendo il player…' };
-        var badge, dot, label, unreadEl, sheet, titleEl, list, input;
-        var playerWin = null, lastSeen = 0, unread = 0, isOpen = false, roomName = '';
-        function mk(tag, css, txt) { var e = document.createElement(tag); if (css) e.style.cssText = css; if (txt) e.textContent = txt; return e; }
+        var badge, dot, label, unreadEl, sheet, titleEl, titleDot, list, input, sendBtn, roomName = '';
+        var playerWin = null, lastSeen = 0, unread = 0, isOpen = false;
+        var seenFromMe = {};
+
+        function mk(tag, css, txt) { var e = document.createElement(tag); if (css) e.style.cssText = css; if (txt != null) e.textContent = txt; return e; }
         function parentEl() {
             var fs = document.fullscreenElement || document.webkitFullscreenElement;
             return (fs && fs.tagName !== 'IFRAME' && fs.tagName !== 'VIDEO') ? fs : document.body;
+        }
+        function esc(s) { return String(s == null ? '' : s); }
+        function avatarColors(name) {
+            var h = 0; var s = String(name || '?');
+            for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+            var hue = Math.abs(h) % 360;
+            return { c1: 'hsl(' + hue + ', 70%, 62%)', c2: 'hsl(' + ((hue + 40) % 360) + ', 75%, 55%)' };
+        }
+        function initials(name) {
+            var c = String(name || '?').trim();
+            if (!c) return '?';
+            var parts = c.split(/[\s_-]+/).filter(Boolean);
+            if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+            return c.slice(0, 2).toUpperCase();
+        }
+        function fmtTime() {
+            var d = new Date();
+            return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
         }
         function paint() {
             if (!badge) return;
             dot.style.background = COL[st.state] || COL.connecting;
             label.textContent = st.text;
             if (titleEl) titleEl.textContent = 'Chat' + (roomName ? ' · ' + roomName : '');
+            if (titleDot) titleDot.style.background = COL[st.state] || COL.connecting;
         }
         function addMsg(who, text, own, sys) {
             if (!list) return;
-            var row = mk('div', 'display:flex;width:100%;margin:3px 0;justify-content:' + (sys ? 'center' : (own ? 'flex-end' : 'flex-start')));
-            var b = mk('div', sys
-                ? 'font-size:12px;color:#9a9aa3;padding:2px 8px'
-                : 'max-width:80%;padding:6px 10px;border-radius:12px;word-break:break-word;background:' + (own ? 'rgba(34,197,94,.28)' : 'rgba(255,255,255,.10)'));
-            if (!sys) { b.appendChild(mk('div', 'font-size:11px;font-weight:700;color:#9a9aa3;margin-bottom:2px', own ? 'Tu' : who)); }
-            b.appendChild(mk('div', '', text));
-            row.appendChild(b);
+            var row = mk('div', 'display:flex;gap:8px;width:100%;margin:2px 0;' + (sys ? 'justify-content:center;' : (own ? 'flex-direction:row-reverse;' : '')));
+            if (sys) {
+                var pill = mk('div', 'font-size:11.5px;color:#9a9aa3;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.10);padding:4px 12px;border-radius:12px;font-style:italic;max-width:85%;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis', esc(text));
+                row.appendChild(pill);
+            } else {
+                var hues = avatarColors(who);
+                var av = mk('div', 'flex-shrink:0;width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,' + hues.c1 + ',' + hues.c2 + ');color:#0a0a10;font:800 11px -apple-system,sans-serif;display:flex;align-items:center;justify-content:center;letter-spacing:-.3px;box-shadow:0 2px 6px rgba(0,0,0,.35)');
+                av.textContent = initials(own ? 'Tu' : who);
+                if (own) av.style.opacity = '0.55';
+                row.appendChild(av);
+                var col = mk('div', 'display:flex;flex-direction:column;max-width:80%;min-width:0;' + (own ? 'align-items:flex-end;' : ''));
+                if (!own) {
+                    var nm = mk('div', 'font-size:11px;font-weight:700;color:' + hues.c1 + ';margin:0 6px 3px;letter-spacing:.2px');
+                    nm.textContent = esc(who || '?');
+                    col.appendChild(nm);
+                }
+                var bub = mk('div', 'padding:8px 12px;border-radius:14px;word-break:break-word;overflow-wrap:anywhere;font-size:14px;line-height:1.42;' + (own
+                    ? 'border-bottom-right-radius:5px;background:rgba(34,197,94,.22);border:1px solid rgba(34,197,94,.35);color:#fff;'
+                    : 'border-bottom-left-radius:5px;background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.14);color:#fff;'));
+                bub.textContent = esc(text);
+                col.appendChild(bub);
+                var ts = mk('div', 'font-size:10px;color:#9a9aa3;margin:3px 6px 0;opacity:.75');
+                ts.textContent = fmtTime();
+                col.appendChild(ts);
+                row.appendChild(col);
+            }
             list.appendChild(row);
-            while (list.childNodes.length > 200) list.removeChild(list.firstChild);
+            while (list.childNodes.length > 250) list.removeChild(list.firstChild);
             list.scrollTop = list.scrollHeight;
-            if (!sys && !own && !isOpen) { unread++; unreadEl.textContent = unread > 99 ? '99+' : String(unread); unreadEl.style.display = 'inline-block'; }
+            if (!sys && !own && !isOpen) {
+                unread++;
+                unreadEl.textContent = unread > 99 ? '99+' : String(unread);
+                unreadEl.style.display = 'inline-block';
+            }
         }
-        function toggle() {
-            isOpen = !isOpen;
+        function scrollToBottom() { try { list.scrollTop = list.scrollHeight; } catch (_) {} }
+        function toggle(force) {
+            isOpen = (force === true) ? true : (force === false ? false : !isOpen);
             sheet.style.display = isOpen ? 'flex' : 'none';
             if (isOpen) {
                 unread = 0; unreadEl.style.display = 'none';
-                list.scrollTop = list.scrollHeight;
-                setTimeout(function () { try { input.focus(); } catch (_) {} }, 50);
+                scrollToBottom();
+                setTimeout(function () { try { input.focus({ preventScroll: true }); } catch (_) { input.focus(); } }, 60);
+            } else {
+                try { input.blur(); } catch (_) {}
             }
         }
         function sendMsg() {
             var t = (input.value || '').trim();
             if (!t) return;
-            if (!playerWin) { addMsg('', 'Player non ancora pronto, riprova tra poco', false, true); return; }
+            if (!playerWin) {
+                addMsg('', 'Player non ancora pronto, riprova tra poco', false, true);
+                return;
+            }
             try { playerWin.postMessage({ __wt_cmd__: 'send', text: t }, '*'); } catch (_) {}
             input.value = '';
+            try { input.focus({ preventScroll: true }); } catch (_) {}
         }
         function build() {
             if (badge || !document.body) return;
-            badge = mk('div', 'position:fixed;top:14px;right:14px;z-index:2147483647;display:flex;align-items:center;gap:9px;height:40px;padding:0 14px 0 12px;box-sizing:border-box;border-radius:20px;background:rgba(20,20,25,.98);color:#fff;border:1.5px solid rgba(255,255,255,.28);font:600 14px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;cursor:pointer;user-select:none;box-shadow:0 4px 24px rgba(0,0,0,.85);max-width:calc(100vw - 28px);overflow:hidden');
+            badge = mk('div', 'position:fixed;top:14px;right:14px;z-index:2147483647;display:flex;align-items:center;gap:9px;height:40px;padding:0 14px 0 12px;box-sizing:border-box;border-radius:20px;background:rgba(20,20,25,.98);color:#fff;border:1.5px solid rgba(255,255,255,.28);font:600 14px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;cursor:pointer;user-select:none;box-shadow:0 4px 24px rgba(0,0,0,.85);max-width:calc(100vw - 28px);overflow:hidden;transition:transform .15s ease');
             badge.id = '__wt_top_badge__';
-            badge.title = 'Watch Together v6.3.5';
-            dot = mk('span', 'display:inline-block;width:12px;height:12px;min-width:12px;border-radius:50%;background:#f59e0b');
+            badge.title = 'Watch Together v6.4.0 — click per la chat';
+            dot = mk('span', 'display:inline-block;width:12px;height:12px;min-width:12px;border-radius:50%;background:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.25), 0 0 10px rgba(245,158,11,.6)');
             label = mk('span', 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:50vw', st.text);
             unreadEl = mk('span', 'display:none;min-width:20px;height:20px;background:#ef4444;color:#fff;border-radius:10px;font:700 11px/20px sans-serif;text-align:center;padding:0 6px');
             badge.appendChild(dot); badge.appendChild(label); badge.appendChild(unreadEl);
-            badge.addEventListener('click', toggle);
+            badge.addEventListener('click', function (e) { e.stopPropagation(); toggle(); });
+            badge.addEventListener('mouseenter', function () { badge.style.transform = 'scale(1.03)'; });
+            badge.addEventListener('mouseleave', function () { badge.style.transform = ''; });
 
-            sheet = mk('div', 'position:fixed;top:64px;right:14px;z-index:2147483646;width:min(380px,calc(100vw - 28px));height:min(50vh,420px);display:none;flex-direction:column;overflow:hidden;border-radius:14px;background:rgba(18,18,22,.94);border:1px solid rgba(255,255,255,.14);color:#fff;font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;box-shadow:0 12px 40px rgba(0,0,0,.6)');
+            sheet = mk('div', 'position:fixed;top:64px;right:14px;z-index:2147483646;width:min(380px,calc(100vw - 28px));height:min(55vh,460px);display:none;flex-direction:column;overflow:hidden;border-radius:14px;background:rgba(18,18,22,.96);border:1px solid rgba(255,255,255,.14);color:#fff;font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;box-shadow:0 12px 40px rgba(0,0,0,.6);transition:transform .2s ease, opacity .15s ease');
             sheet.id = '__wt_top_sheet__';
-            titleEl = mk('div', 'padding:10px 14px;font-weight:600;border-bottom:1px solid rgba(255,255,255,.14);flex-shrink:0', 'Chat');
-            list = mk('div', 'flex:1;overflow-y:auto;padding:8px 10px');
-            var row = mk('div', 'display:flex;gap:6px;padding:8px;border-top:1px solid rgba(255,255,255,.14);flex-shrink:0');
-            input = mk('input', 'flex:1;min-width:0;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#fff;font:14px sans-serif;outline:none');
-            input.type = 'text'; input.placeholder = 'Scrivi un messaggio…'; input.maxLength = 500;
-            var btn = mk('button', 'padding:8px 12px;border:0;border-radius:8px;background:#22c55e;color:#04210f;font:700 14px sans-serif;cursor:pointer', 'Invia');
-            btn.addEventListener('click', sendMsg);
-            // window + capture: scatta PRIMA del key guard di document (che altrimenti inghiotte Invio)
+
+            var hdr = mk('div', 'padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.14);flex-shrink:0;display:flex;align-items:center;gap:8px;background:rgba(28,28,34,.98)');
+            titleDot = mk('span', 'display:inline-block;width:10px;height:10px;min-width:10px;border-radius:50%;background:#f59e0b;flex-shrink:0');
+            titleEl = mk('div', 'font-weight:600;font-size:14px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis', 'Chat');
+            var closeBtn = mk('button', 'background:transparent;border:0;color:#9a9aa3;width:28px;height:28px;border-radius:6px;cursor:pointer;font-size:20px;padding:0;line-height:1;display:flex;align-items:center;justify-content:center', '×');
+            closeBtn.addEventListener('click', function (e) { e.stopPropagation(); toggle(false); });
+            hdr.appendChild(titleDot); hdr.appendChild(titleEl); hdr.appendChild(closeBtn);
+
+            list = mk('div', 'flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:6px;scroll-behavior:smooth;-webkit-overflow-scrolling:touch');
+
+            var row = mk('div', 'display:flex;gap:8px;padding:10px 12px;border-top:1px solid rgba(255,255,255,.14);flex-shrink:0;background:rgba(28,28,34,.98)');
+            input = mk('input', 'flex:1;min-width:0;padding:10px 14px;border-radius:20px;border:1px solid rgba(255,255,255,.20);background:rgba(255,255,255,.08);color:#fff;font:16px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;outline:none;box-sizing:border-box;-webkit-appearance:none;appearance:none;touch-action:manipulation');
+            input.type = 'text';
+            input.placeholder = 'Scrivi un messaggio…';
+            input.maxLength = 500;
+            input.autocomplete = 'off';
+            input.autocorrect = 'off';
+            input.autocapitalize = 'sentences';
+            input.spellcheck = false;
+            sendBtn = mk('button', 'background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;border:0;width:44px;height:44px;border-radius:50%;font:700 18px -apple-system,sans-serif;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;padding:0;box-shadow:0 4px 12px rgba(34,197,94,.35)');
+            sendBtn.textContent = '➤';
+            sendBtn.addEventListener('click', function (e) { e.stopPropagation(); sendMsg(); });
+            input.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+                    e.preventDefault();
+                    sendMsg();
+                }
+            });
+            // blocco keydown/keyup/keypress per evitare che il player catturi i tasti
             ['keydown', 'keyup', 'keypress'].forEach(function (ev) {
                 window.addEventListener(ev, function (e) {
                     if (e.target !== input) return;
                     e.stopPropagation();
-                    if (ev === 'keydown' && e.key === 'Enter') { e.preventDefault(); sendMsg(); }
                 }, true);
             });
-            row.appendChild(input); row.appendChild(btn);
-            sheet.appendChild(titleEl); sheet.appendChild(list); sheet.appendChild(row);
+            row.appendChild(input); row.appendChild(sendBtn);
+
+            sheet.appendChild(hdr); sheet.appendChild(list); sheet.appendChild(row);
             parentEl().appendChild(badge); parentEl().appendChild(sheet);
+
+            // ESC chiude la chat
+            document.addEventListener('keydown', function (e) {
+                if (e.key === 'Escape' && isOpen) toggle(false);
+            });
+
+            // Gestione tastiera mobile (iOS): riposiziona sheet sopra la tastiera
+            if (window.visualViewport) {
+                var reposition = function () {
+                    if (!isOpen) return;
+                    var vv = window.visualViewport;
+                    var kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+                    sheet.style.bottom = kb > 0 ? (kb + 'px') : '';
+                    sheet.style.height = kb > 0 ? Math.min(window.innerHeight - kb - 80, 300) + 'px' : 'min(55vh,460px)';
+                    sheet.style.maxHeight = sheet.style.height;
+                    scrollToBottom();
+                };
+                try {
+                    vv.addEventListener('resize', reposition);
+                    vv.addEventListener('scroll', reposition);
+                } catch (_) {}
+                input.addEventListener('focus', function () { setTimeout(reposition, 80); setTimeout(reposition, 320); });
+                input.addEventListener('blur', function () {
+                    setTimeout(function () { sheet.style.bottom = ''; sheet.style.height = 'min(55vh,460px)'; }, 80);
+                });
+            }
+
             paint();
         }
         window.addEventListener('message', function (e) {
@@ -291,7 +392,7 @@
         var T0 = Date.now();
         setInterval(keepAlive, 1000);
         keepAlive();
-    })();
+    })();    })();
 
     // Bail-out homepage statica
     if (IS_TOP && location.pathname === '/watch'
@@ -3174,7 +3275,8 @@
     #__wt_sheet__ { width: 440px !important; min-width: 440px !important; max-width: 440px !important; }
     @media (max-width: 700px) { #__wt_sheet__ { width: auto !important; min-width: 0 !important; max-width: none !important; } }
     #__wt_sheet__ * { word-break: break-word; overflow-wrap: anywhere; }
-    #__wt_sheet__ input, #__wt_sheet__ textarea { min-width: 0 !important; width: 100%; }
+    #__wt_sheet__ input, #__wt_sheet__ textarea { min-width: 0 !important; width: 100%; font-size: 16px !important; }
+    #__wt_top_sheet__ input, #__wt_top_sheet__ textarea { font-size: 16px !important; -webkit-appearance: none; appearance: none; }
     @keyframes wt-glow { 0%,100% { box-shadow: 0 4px 24px rgba(0,0,0,.85), 0 0 0 1px rgba(0,0,0,.4); } 50% { box-shadow: 0 4px 24px rgba(0,0,0,.85), 0 0 0 1px rgba(0,0,0,.4), 0 0 24px rgba(34,197,94,.4); } }
     `;
     (document.head || document.documentElement).appendChild(styleTag);
