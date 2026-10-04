@@ -3,7 +3,7 @@
 // @namespace    watch-together
 // @match        *://*/*
 // @match        *://*.vixcloud.co/*
-// @version      6.2.6
+// @version      6.2.7
 // @description  Sync video + chat + room picker + ownership + autoplay su gesto
 // @author       watch-together contributors
 // @run-at       document-start
@@ -649,6 +649,16 @@ function extractVideoUrl(url) {
         tryBuild();
     })();
 
+    // Watchdog: se dopo 8s non siamo connessi, mostra lo stato nel badge
+    (function __wt_boot_watchdog__() {
+        setTimeout(function () {
+            if (connected) return;
+            var st = (window.__wt_state__ || {}).text || 'WT';
+            setStatus('connecting', 'Timeout: ' + st);
+            try { __wt_sendDebugAdHoc('WATCHDOG_TIMEOUT state=' + st); } catch (_) {}
+        }, 8000);
+    })();
+
     log('cerco <video>…');
     const waitVideo = setInterval(() => {
         const v = pickVideo();
@@ -656,6 +666,9 @@ function extractVideoUrl(url) {
             clearInterval(waitVideo);
             video = v;
             log('video trovato');
+            try { buildUI(); } catch (e) { log('buildUI (early) err:', e); }
+            try { setStatus('connecting', 'Video trovato'); } catch (_) {}
+            try { __wt_sendDebugAdHoc('VIDEO_FOUND host=' + location.hostname + ' path=' + location.pathname.slice(0, 60)); } catch (_) {}
             boot();
         }
     }, 500);
@@ -679,6 +692,8 @@ function extractVideoUrl(url) {
     }
 
     async function boot() {
+        log('BOOT start');
+        try { __wt_sendDebugAdHoc('BOOT_START host=' + location.hostname); } catch (_) {}
         loadConfig();
         try { buildUI(); } catch (e) {
             log('buildUI error:', e);
@@ -718,6 +733,8 @@ function extractVideoUrl(url) {
     }
 
     function proceedAfterUrl() {
+        log('proceedAfterUrl start');
+        try { __wt_sendDebugAdHoc('PROCEED hashRoom=' + String(BOOT_HASH_ROOM) + ' author=' + String(BOOT_HASH_AUTHOR)); } catch (_) {}
         try {
             const pendNav = sessionStorage.getItem('wt_pending_navigate') === '1';
             const follNav = sessionStorage.getItem('wt_following_navigate') === '1';
@@ -758,6 +775,8 @@ function extractVideoUrl(url) {
             autoReconnect = false;
             persistent = BOOT_HASH_PERSISTENT;
             saveConfig();
+            setStatus('connecting', 'Stanza: ' + room);
+            try { __wt_sendDebugAdHoc('HASHROOM_USED room=' + room + ' author=' + String(author)); } catch (_) {}
             if (!author) askAuthor(() => connect());
             else connect();
             return;
@@ -1125,6 +1144,9 @@ function extractVideoUrl(url) {
             'margin-left:2px', 'flex-shrink:0', 'box-sizing:border-box'
         ].join(';'));
         badge.appendChild(badgeUnread);
+
+        // Mostra subito qualcosa di utile nel badge (non "WT" default)
+        try { badgeLabel.textContent = 'Init…'; } catch (_) {}
 
         onTap(badge, () => sheetOpen ? closeSheet() : openSheet());
 
@@ -1901,7 +1923,8 @@ function extractVideoUrl(url) {
 
     // =================================================================
     function setStatus(state, text) {
-        if (!badgeDot) return;
+        try { window.__wt_state__ = { state: state, text: text, ts: Date.now() }; } catch (_) {}
+        if (!badgeDot) { try { console.log('[WT] setStatus(no badgeDot):', state, text); } catch (_) {} return; }
         const colors = { connected: THEME.ok, connecting: THEME.warn, error: THEME.danger, disconnected: '#6b7280' };
         const glows = {
             connected: 'rgba(34,197,94,.6)',
